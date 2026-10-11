@@ -1,0 +1,529 @@
+Listed directory src
+Listed directory rag_platform
+Listed directory ui
+Viewed app.py:1-7
+Viewed rag_system.py:1-6
+Viewed config.py:1-37
+Viewed requirements.txt:1-12
+Viewed pyproject.toml:1-93
+Viewed PROJECT_CONTEXT.md:1-401
+Viewed config.py:1-100
+Listed directory api
+Viewed main.py:1-87
+Listed directory routes
+Viewed schemas.py:1-68
+Viewed v1.py:1-280
+Listed directory agent
+Listed directory mcp
+Listed directory vectorstore
+Listed directory migrations
+Listed directory ingestion
+Listed directory eval
+Listed directory observability
+Listed directory tests
+Listed directory unit
+Listed directory integration
+Listed directory docker
+Listed directory .github
+Listed directory workflows
+Viewed app.py:1-100
+Viewed app.py:200-350
+Viewed app.py:351-520
+Viewed app.py:521-734
+Viewed graph.py:1-120
+Viewed graph.py:121-300
+Viewed graph.py:301-480
+Viewed graph.py:481-750
+Viewed graph.py:751-895
+Viewed tools.py:1-120
+Viewed tools.py:350-520
+Viewed tools.py:521-650
+Viewed tools.py:651-824
+Viewed excel_tool.py:1-100
+Viewed mcp_client.py:1-100
+Viewed mcp_client.py:101-240
+Viewed mcp_client.py:241-331
+Viewed server.py:1-100
+Viewed server.py:101-200
+Viewed mcp_config.json:1-23
+Viewed 001_create_documents_and_chunks.sql:1-82
+Viewed upload_company_report.py:1-100
+Viewed upload_company_report.py:101-165
+Viewed check_supabase.py:1-24
+Viewed supabase_store.py:1-150
+Viewed supabase_store.py:151-300
+Viewed pipeline.py:1-100
+Viewed pipeline.py:101-169
+Viewed ocr.py:1-83
+Viewed images.py:1-100
+Viewed embeddings.py:1-45
+Viewed run_eval.py:1-100
+Viewed tracing.py:1-100
+Viewed rag_system.py:1-100
+Viewed test_mode_and_excel_flow.py:1-100
+Viewed test_agent.py:1-100
+Viewed test_supabase_smoke.py:1-36
+Viewed Dockerfile:1-61
+Viewed Dockerfile.ui:1-54
+Viewed docker-compose.yml:1-37
+Viewed ci.yml:1-109
+Viewed .env.example:1-53
+Ran command: `Get-Content .env | Where-Object { $_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=' } | ForEach-Object { ($_ -split '=')[0].Trim() }`
+Ran command: `.\.venv\Scripts\python.exe --version`
+Ran command: `.\.venv\Scripts\pip.exe list`
+Used tool: manage_task
+Ran command: `Get-Command python | Select-Object -ExpandProperty Source`
+Ran command: `py -0`
+Viewed pyvenv.cfg:1-6
+Listed directory site-packages
+Listed directory archive
+Ran command: `git status`
+Ran command: `git log -1 --stat`
+Ran command: `git remote -v`
+Ran command: `git log -5 --oneline`
+Ran command: `git show bb68907`
+Viewed test_api.py:1-100
+Viewed example.py:1-60
+Viewed test_rag.py:1-50
+Listed directory data
+Listed directory generated_files
+Viewed CHANGELOG.md:1-60
+Viewed CHANGELOG.md:61-135
+
+# Technical Architecture & System Overview: Multimodal Agentic RAG Platform
+
+---
+
+## 1. Executive Summary
+
+### Application Purpose & Intended Users
+The application is a **Multimodal Agentic Retrieval-Augmented Generation (RAG) Platform** with Model Context Protocol (MCP) tool interoperability. It is designed for analysts, researchers, and enterprise users who need to:
+- Ingest and query dense multimodal PDF documents (extracting body prose, structured markdown tables, and embedded images/charts).
+- Interact across three distinct operational modes: **Multi-Document Knowledge Base**, **Company Research**, and **General Q&A**.
+- Dynamically route queries between dense vector search, lexical matching, arithmetic calculation, live web search, and structured spreadsheet generation (**Excel `.xlsx` export**).
+
+### Current Implementation Status vs. Runtime State
+1. **Source Code Implementation (Complete & Mature)**:
+   - The modular package [rag_platform](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform) implements the full LangGraph state machine, hybrid retrieval with Table-of-Contents (TOC) penalty and prose boosting, a production FastAPI service, Streamlit UI, MCP client/server layers, Excel generation, observability tracing, and a RAGAS-compatible evaluation harness.
+2. **Current Local Environment State (Unpopulated Virtual Environment)**:
+   - The local directory contains a Python virtual environment at [d:\projects\RAG_Github\RAG_chatbot_claude\rag_project\.venv](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/.venv) (Python 3.12.10).
+   - **Crucial Finding**: Inspection reveals that `.venv` is currently unpopulated (contains only `pip 25.0.1`). The project packages declared in [requirements.txt](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/requirements.txt) and [pyproject.toml](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/pyproject.toml) **have not yet been installed** into this specific `.venv`.
+3. **Database & External Dependencies**:
+   - The repository contains `.env` and `.env.example`. Supabase pgvector credentials and OpenRouter/OpenAI API keys are configured via environment variables. The database requires specific PostgreSQL tables and an RPC function (`match_chunks`).
+
+### Technologies & Frameworks Actually Used
+- **Backend Service**: [FastAPI](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/main.py) 0.110+, [Uvicorn](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/main.py#L73-L84), Starlette SSE streaming.
+- **Frontend Client**: [Streamlit](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/ui/app.py) 1.38+ / 1.44.1 with custom dark theme CSS and inline SVG avatars.
+- **Agent Orchestration**: [LangGraph](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/graph.py) (`StateGraph`) 0.2.0+, [LangChain Core](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/rag_system.py).
+- **Ingestion & Multimodal**: [PyMuPDF (fitz)](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/pipeline.py) 1.24+, Pillow (`PIL`), optional OCR (`pytesseract`, `easyocr`).
+- **Vector Store & Embeddings**: Supabase (`supabase-py` 2.15.0), PostgreSQL `pgvector`, [sentence-transformers](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/embeddings.py) (`all-MiniLM-L6-v2`, 384 dimensions).
+- **Artifacts & Tools**: [openpyxl](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/excel_tool.py) 3.1.5, Python AST safe math evaluation, DuckDuckGo search.
+- **Configuration & Observability**: [pydantic-settings](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/config.py) 2.2+, Langfuse, LangSmith, custom JSON logger with correlation IDs.
+
+---
+
+## 2. Actual Architecture
+
+The system operates primarily in a decoupled **Client-Server architecture** (FastAPI backend + Streamlit frontend), while retaining an in-process local fallback inside Streamlit if the FastAPI backend is offline.
+
+```mermaid
+flowchart TD
+    subgraph UI ["Frontend Client (Streamlit :8501)"]
+        User([User Query / File Upload]) --> StreamlitApp["ui/app.py"]
+        StreamlitApp --> ModeSwitch{"UI Mode Selected"}
+        ModeSwitch -->|"Knowledge Base"| KBFilter["Doc Scope & Content Filter"]
+        ModeSwitch -->|"Research"| CompFilter["Company Dossier Filter"]
+        ModeSwitch -->|"Q&A"| DirectScope["Strict Isolation (No Retrieval)"]
+    end
+
+    subgraph Backend ["FastAPI Backend Service (:8000)"]
+        StreamlitApp -->|HTTP POST /chat or SSE Streaming| APIRoute["/api/v1/chat (v1.py)"]
+        StreamlitApp -->|HTTP POST /ingest| IngestRoute["/api/v1/ingest (v1.py)"]
+        StreamlitApp -->|HTTP GET /files/{id}| FileRoute["/api/v1/files/{file_id}"]
+
+        APIRoute --> AgentRunner["run_agent() (graph.py)"]
+        
+        subgraph LangGraph ["LangGraph State Machine"]
+            AgentRunner --> Router["Router Node (LLM / Heuristics)"]
+            Router -->|retrieve| Retriever["Retriever Node"]
+            Router -->|tool / mcp| ToolCaller["Tool Caller Node"]
+            Router -->|hybrid| Retriever
+            Retriever -->|hybrid path| ToolCaller
+            Retriever -->|standard path| Responder["Responder Node"]
+            ToolCaller --> Responder
+            Responder --> FinalAnswer([Synthesized Answer])
+        end
+    end
+
+    subgraph Storage ["Data & External Providers"]
+        Retriever -->|Dense + Lexical Search| Supabase[("Supabase pgvector (match_chunks RPC)")]
+        IngestRoute -->|Store Chunks & Embeddings| Supabase
+        ToolCaller -->|create_excel| ExcelWriter["openpyxl -> generated_files/*.xlsx"]
+        ToolCaller -->|calculator| ASTMath["Python AST Safe Evaluator"]
+        ToolCaller -->|mcp_web_search| DuckDuckGo["DuckDuckGo Search"]
+        Router & Responder -->|LLM Inference| OpenRouter["OpenRouter / OpenAI API"]
+        Retriever -->|embed_query| HuggingFace["sentence-transformers (all-MiniLM-L6-v2)"]
+    end
+```
+
+---
+
+## 3. Important Project Files
+
+### Frontend & Application Entry Points
+- [app.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/app.py): Root shim importing and running `ui.app.main()`.
+- [ui/app.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/ui/app.py): Complete Streamlit user interface (734 lines). Handles dark-mode styling, mode switching (`Knowledge Base`, `Research`, `Q&A`), file uploading, SSE streaming consumption via [`call_api_chat`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/ui/app.py#L255-L334), Excel artifact downloading via [`render_generated_file_download`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/ui/app.py#L356-L370), and fallback in-process execution.
+
+### Backend & API Entry Points
+- [src/rag_platform/api/main.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/main.py): FastAPI application factory [`create_app()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/main.py#L19-L68) with CORS, rate limiting, correlation ID middleware, startup embedding warmup, and route mounting.
+- [src/rag_platform/api/routes/v1.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/routes/v1.py): REST and SSE endpoints:
+  - `GET /api/v1/health`: Basic liveness check.
+  - `GET /api/v1/ready`: Probes whether Supabase credentials and LLM API keys are valid.
+  - `POST /api/v1/chat`: Synchronous JSON or SSE streaming chat invocation.
+  - `POST /api/v1/ingest`: Multipart PDF file ingestion and chunk embedding.
+  - `GET /api/v1/eval`: Triggers on-demand RAGAS benchmark evaluation.
+  - `GET /api/v1/files/{file_id}`: Secure download endpoint for agent-generated Excel spreadsheets.
+- [src/rag_platform/api/schemas.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/schemas.py): Pydantic request/response models ([`ChatRequest`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/schemas.py#L37-L47), [`ChatResponse`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/schemas.py#L49-L59), [`IngestResponse`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/schemas.py#L25-L35)).
+- [src/rag_platform/api/middleware.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/middleware.py): Correlation tracking ([`CorrelationIdMiddleware`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/middleware.py#L46-L65)), sliding window rate limiting ([`RateLimitingMiddleware`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/middleware.py#L125-L147)), and global exception handlers.
+
+### Core RAG & Agent Orchestration
+- [src/rag_platform/agent/graph.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/graph.py): LangGraph workflow graph definition ([`create_agent_graph()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/graph.py#L190-L760)) and public entrypoint [`run_agent()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/graph.py#L763-L895). Implements router, retriever, tool caller, and grounded synthesis responder.
+- [src/rag_platform/agent/tools.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py): Modular tools:
+  - [`retrieval_tool()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py#L710-L824): Hybrid dense + lexical scoring, Table-of-Contents penalty ([`_is_table_of_contents_chunk()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py#L46-L56)), prose quality bonus, and adjacent chunk expansion.
+  - [`calculator_tool()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py#L615-L656): AST-based safe arithmetic evaluator.
+  - [`web_search_tool()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py#L658-L708): DuckDuckGo live search with offline fallback.
+- [src/rag_platform/agent/excel_tool.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/excel_tool.py): [`create_excel_tool()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/excel_tool.py#L83-L200) creates styled workbooks via openpyxl, saving UUID-hex files in `generated_files/` and returning safe metadata for API downloads.
+- [src/rag_platform/agent/mcp_client.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/mcp_client.py): MCP client layer managing server configs, tool discovery, and tool dispatch (`read_file`, `mcp_web_search`, `create_excel`).
+- [src/rag_platform/mcp/server.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/mcp/server.py): MCP Server exposing [`query_knowledge_base`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/mcp/server.py#L100-L150) and [`list_documents`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/mcp/server.py#L151-L177) for Claude Desktop or Cursor integration.
+
+### Document Ingestion & Vector Storage
+- [src/rag_platform/ingestion/pipeline.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/pipeline.py): Multimodal coordinator [`ingest_pdf()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/pipeline.py#L18-L169) extracting text, markdown tables, and images/figures.
+- [src/rag_platform/ingestion/pdf_text.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/pdf_text.py): Extracts prose and invokes OCR fallback if text is sparse.
+- [src/rag_platform/ingestion/tables.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/tables.py): Detects tables and renders them into structured markdown tables.
+- [src/rag_platform/ingestion/images.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/images.py): Extracts raster images, writes them to disk, and can optionally invoke vision LLMs for captioning.
+- [src/rag_platform/vectorstore/supabase_store.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/supabase_store.py): [`SupabaseVectorStore`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/supabase_store.py#L98-L366) managing `documents` and `chunks` upsertion, deletion, and vector RPC calls (`match_chunks`).
+- [src/rag_platform/vectorstore/embeddings.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/embeddings.py): Singleton cache for HuggingFace embeddings (`all-MiniLM-L6-v2`).
+- [src/rag_platform/vectorstore/migrations/001_create_documents_and_chunks.sql](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/migrations/001_create_documents_and_chunks.sql): Database migration setting up tables, HNSW indexes, and `match_chunks` RPC.
+
+### Observability, Configuration & Scripts
+- [src/rag_platform/config.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/config.py): Pydantic [`Settings`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/config.py#L11-L95) class reading from `.env`.
+- [src/rag_platform/observability/tracing.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/observability/tracing.py): Span tracing supporting Langfuse, LangSmith, and structured logs.
+- [src/rag_platform/eval/run_eval.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/eval/run_eval.py): Faithfulness, answer relevance, and context precision metric evaluators over [testset.json](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/eval/testset.json).
+- [check_supabase.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/check_supabase.py): Utility script to test live Supabase credentials and `documents` table presence.
+- [upload_company_report.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/upload_company_report.py): CLI tool to ingest annual reports scoped to a specific company ID and stock ticker.
+
+---
+
+## 4. Frontend and Backend
+
+### Frameworks & Local Execution
+- **Frontend**: Streamlit. Started via `streamlit run ui/app.py` (or `streamlit run app.py`). Runs by default on port `8501`.
+- **Backend**: FastAPI running on Uvicorn. Started via `python -m uvicorn rag_platform.api.main:app --port 8000 --reload`. Runs by default on port `8000`.
+
+### Communication Mechanism
+- Streamlit communicates with FastAPI via **HTTP REST** (`requests.post`, `requests.get`) and **Server-Sent Events (SSE)** streaming:
+  - Base URL defaults to `http://localhost:8000/api/v1` (configurable via `API_BASE_URL`).
+  - Chat responses stream token-by-token using SSE (`_sse_generator` in `v1.py` and `resp.iter_lines()` in `ui/app.py`).
+  - Excel files generated during chat are downloaded by the user directly through the backend endpoint `GET /api/v1/files/{file_id}`.
+- **Do both services need to run simultaneously?**
+  - **Yes, for full functionality**: Running both ensures fast SSE streaming, proper Excel downloads, and complete agent orchestration.
+  - **Partial Fallback**: If the FastAPI server is unreachable, `ui/app.py` has an internal fallback calling `RAGSystem` and `SupabaseVectorStore` directly in-process. However, the fallback does *not* support Company Research mode or Excel file downloads.
+
+### CORS & Networking Requirements
+- FastAPI configures [`CORSMiddleware`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/api/main.py#L36-L43) allowing all origins (`allow_origins=["*"]`) and exposes `X-Correlation-ID`.
+- In Docker, `docker-compose.yml` configures network connectivity where the UI container accesses the API container at `http://api:8000/api/v1`.
+
+### Exact Startup Order & Shutdown Commands
+1. **Startup Order**:
+   - Terminal 1 (Backend): Start FastAPI first so the embedding model prewarms and health checks pass.
+   - Terminal 2 (Frontend): Start Streamlit second so it immediately detects the active backend.
+2. **Shutdown**: Press `Ctrl + C` in each PowerShell terminal.
+
+---
+
+## 5. End-to-End RAG and Agent Workflow
+
+From the moment a user submits a query, execution follows a 10-step lifecycle:
+
+```
+[User Query]
+     │
+     ▼
+[Step 1: Request Validation & Mode Scoping]
+  - Mode = "Q&A": allow_retrieval=False, doc_filters=None (strict isolation)
+  - Mode = "Research": requires company_id
+  - Mode = "Knowledge Base": scopes to doc_id and content_type (text/table/image)
+     │
+     ▼
+[Step 2: LangGraph Agent Invocation] run_agent() in graph.py
+     │
+     ▼
+[Step 3: Router Node Classification]
+  - If allow_retrieval is False -> forces "direct"
+  - If company_id present -> bypasses router to "retrieve"
+  - Otherwise -> LLM classification + regex heuristics -> (retrieve | tool | mcp | hybrid | direct)
+     │
+     ▼
+[Step 4: Conditional Node Routing]
+  ├───────────────────────┬───────────────────────────┐
+  │                       │                           │
+  ▼ ("retrieve"/"hybrid") ▼ ("tool"/"mcp")            ▼ ("direct")
+[Step 5: Retriever Node]  [Step 7: Tool Caller]       [Step 8: Responder]
+  - Dense vector search     - Calculator (AST)          - Synthesize direct
+  - Lexical candidate pool  - Web search (DDG)            general knowledge
+  - TOC penalty & Prose     - Create Excel (openpyxl)     answer
+  - Adjacent chunk expand   - Read file (MCP)
+  - If hybrid: proceeds to Tool Caller Node
+     │
+     ▼
+[Step 8: Responder Node (Synthesis)]
+  - System prompt enforces strict grounding ("evidence-first")
+  - Injects retrieved context blocks and tool outputs
+  - Detects and strips unwanted tool markup (<tool_call>)
+  - Emits citations and sources
+     │
+     ▼
+[Step 9: Artifact Delivery & Metadata Packaging]
+  - Packages AgentResult with reasoning_path, sources, tool_outputs
+  - If Excel was created, includes file_id token in tool_outputs["generated_file"]
+     │
+     ▼
+[Step 10: Client Presentation]
+  - Streamlit displays answer, expandable sources, and an interactive "Download file.xlsx" button
+```
+
+### Flow Differences Across the Three UI Modes
+
+| Dimension | Multi-Document Knowledge Base | Company Research Mode | General Q&A Mode |
+| :--- | :--- | :--- | :--- |
+| **Selection Scope** | Specific `doc_id` or global search | Specific `company_id` selected from database | No document or company scope permitted |
+| **Content Filtering** | Supports `text`, `table`, `image`, or `all` | Global across all documents for that company | Disabled |
+| **Retrieval Allowed** | Yes | Yes | **No** (`allow_retrieval=False`) |
+| **Router Behavior** | LLM classifies query | **Bypasses router**, forces `retrieve` | **Forced to `direct`** |
+| **Zero-Doc Behavior** | Standard empty search message | Hard guardrail: returns exact notice without hallucinating | N/A |
+| **System Prompt** | Evidence-first grounding | Authoritative company identity enforcement | General-purpose assistant (no internal citations) |
+
+---
+
+## 6. Database and Document Ingestion
+
+### Supported File Types & Processing Pipeline
+- **File Type**: PDF (`.pdf`) only.
+- **Pipeline Coordinator**: [`ingest_pdf()`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/ingestion/pipeline.py#L18-L169).
+  1. Opens document via PyMuPDF (`fitz`).
+  2. Iterates pages:
+     - **Text**: Extracted via `extract_page_text_chunks`. If fewer than 40 characters are present, OCR fallback (`is_scanned_page`) triggers using `pytesseract` or `easyocr`.
+     - **Tables**: Extracted via `extract_tables_from_page` and converted into Markdown tables (`content_type="table"`).
+     - **Images**: Extracted via `extract_images_from_page`, filtered by size (>100x100px), saved locally, and tagged (`content_type="image"`). *Note*: `caption_llm=False` is set during API and UI uploads to eliminate vision LLM latency.
+  3. **Chunking**: `RecursiveCharacterTextSplitter` chunks prose (default: chunk size 1000 characters, overlap 200 characters).
+  4. **Embedding**: `all-MiniLM-L6-v2` produces 384-dimensional dense vectors.
+
+### Supabase Vector Store & Database Schema
+Defined in [001_create_documents_and_chunks.sql](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/migrations/001_create_documents_and_chunks.sql):
+1. **Extension**: `CREATE EXTENSION IF NOT EXISTS vector;`
+2. **`documents` Table**:
+   - `doc_id` (TEXT, PK): Unique document identifier.
+   - `filename` (TEXT): Display name.
+   - `uploaded_at` (TIMESTAMPTZ): Upload timestamp.
+   - `doc_type` (TEXT): Defaults to `pdf`.
+   - `metadata` (JSONB): Contains page counts, table counts, image counts, and optional `company_id`.
+3. **`chunks` Table**:
+   - `chunk_id` (TEXT, PK): Unique chunk ID (`<doc_id>_chunk_<idx>`).
+   - `doc_id` (TEXT, FK): References `documents(doc_id) ON DELETE CASCADE`.
+   - `content` (TEXT): Text content or Markdown table.
+   - `embedding` (`vector(384)`): Dense embedding vector with HNSW index (`vector_cosine_ops`, `m=16`, `ef_construction=64`).
+   - `metadata` (JSONB): Stores `page_number`, `content_type` (`text`/`table`/`image`), and chunk index.
+4. **RPC Function (`match_chunks`)**:
+   - Accepts `query_embedding`, `filter_doc_id`, `filter_content_type`, `filter_start_date`, `filter_end_date`, and `match_count`.
+   - Returns chunks ranked by cosine similarity `1 - (c.embedding <=> query_embedding)`.
+5. **Additional Schema Requirement**:
+   - The UI and `upload_company_report.py` query a `companies` table (`id`, `symbol`, `name`) for Company Research Mode, and store PDFs in a Supabase Storage bucket named `annual-reports`.
+
+---
+
+## 7. MCP and Tool Integrations
+
+### Implemented MCP Architecture
+1. **MCP Server** ([src/rag_platform/mcp/server.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/mcp/server.py)):
+   - Implements tools for external MCP hosts (Claude Desktop, Claude Code, Cursor):
+     - `query_knowledge_base(question, doc_filter, content_type)`
+     - `list_documents()`
+   - Can run via standard input/output (stdio JSON-RPC).
+2. **MCP Client** ([src/rag_platform/agent/mcp_client.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/mcp_client.py)):
+   - Loads server configuration from [mcp_config.json](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/mcp_config.json).
+   - Currently dispatches tools **in-process within Python** for reliability:
+     - `read_file`: Reads up to 5 KB from a local file path.
+     - `mcp_web_search`: Queries DuckDuckGo for live results.
+     - `create_excel`: Forwards structured data to `create_excel_tool`.
+   - *Implementation Detail*: External subprocess JSON-RPC communication is stubbed; tools execute via their direct internal handlers.
+
+### Local Tools & Excel Export Delivery
+- **Calculator Tool** ([tools.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/tools.py#L615-L656)): Evaluates math expressions safely using `ast.parse` and whitelist operators; never uses `eval()` or `exec()`.
+- **Excel Tool** ([excel_tool.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/agent/excel_tool.py)):
+  - Input: List of row dictionaries (`data`), sheet name, desired filename.
+  - Generates `.xlsx` using `openpyxl`, auto-adjusts column widths, bolds header rows.
+  - Security: File on disk is saved under an opaque 32-character hexadecimal UUID (`generated_files/<hex>.xlsx`). Path traversal is strictly prevented.
+  - Client Delivery: Metadata is returned in API `tool_outputs["generated_file"]`. The Streamlit UI calls `fetch_generated_file_bytes()` via `GET /api/v1/files/{file_id}` and renders a native download button.
+
+---
+
+## 8. Dependencies and Environment Variables
+
+### Python & Package Status
+- **Python Compatibility**: Requires Python `>=3.10` (tested in CI on 3.11 and 3.12; local venv is 3.12.10).
+- **Package Manifests**:
+  - [pyproject.toml](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/pyproject.toml): Defines the installable package `rag-platform` (version 1.0.0) with dependencies.
+  - [requirements.txt](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/requirements.txt): Pinned dependencies ending with `-e .`, which installs the local package in editable mode.
+- **Local Environment Reality**: `.venv` is currently empty. Dependencies must be installed before running code.
+
+### Required and Optional Environment Variables
+
+All variables are read via [src/rag_platform/config.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/config.py) from the `.env` file:
+
+| Variable Name | Required / Optional | Used By | Description |
+| :--- | :--- | :--- | :--- |
+| `OPENROUTER_API_KEY` | Required* | LLM inference in `graph.py` | Primary API key for OpenRouter models (*or `OPENAI_API_KEY`) |
+| `OPENAI_API_KEY` | Optional* | LLM inference fallback | Fallback API key if not using OpenRouter |
+| `SUPABASE_URL` | Required** | `SupabaseVectorStore` | Supabase project URL (**for database operations) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Required** | `SupabaseVectorStore` | Admin service role key (or `SUPABASE_ANON_KEY` / `SUPABASE_KEY`) |
+| `SUPABASE_ANON_KEY` | Optional | `SupabaseVectorStore` | Fallback key if service role key is absent |
+| `OPENROUTER_BASE_URL` | Optional | LLM HTTP client | Defaults to `https://openrouter.ai/api/v1` |
+| `LLM_MODEL` | Optional | Router / Responder | Default: `inclusionai/ling-3.0-flash-fin:free` |
+| `LLM_MODEL_MODE` | Optional | Model failover | `fixed` (single model) or `auto` (fallback pool) |
+| `EMBEDDING_MODEL` | Optional | Embeddings cache | Defaults to `sentence-transformers/all-MiniLM-L6-v2` |
+| `HUGGINGFACEHUB_API_TOKEN` | Optional | HuggingFace downloads | Avoids rate limits when downloading models |
+| `RAG_CHUNK_SIZE` | Optional | Ingestion text splitting | Defaults to `1000` characters |
+| `RAG_CHUNK_OVERLAP` | Optional | Ingestion text splitting | Defaults to `200` characters |
+| `RAG_TEMPERATURE` | Optional | LLM synthesis | Defaults to `0.2` |
+| `LANGFUSE_PUBLIC_KEY` | Optional | Observability tracer | Langfuse tracing credentials |
+| `LANGFUSE_SECRET_KEY` | Optional | Observability tracer | Langfuse tracing credentials |
+| `LANGSMITH_TRACING` | Optional | LangChain tracing | Set to `true` to enable LangSmith |
+
+*Note: All secret values are safely redacted. Missing LLM credentials raise [`ConfigurationError`](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/exceptions.py#L11-L15); missing Supabase credentials cause readiness check degradation.*
+
+---
+
+## 9. Local Testing Checklist
+
+Follow this exact step-by-step checklist in Windows PowerShell to test the project locally without modifying code:
+
+### Step 1: Verify Interpreter & Project Directory
+```powershell
+Set-Location "d:\projects\RAG_Github\RAG_chatbot_claude\rag_project"
+.\.venv\Scripts\python.exe --version
+```
+*Expected*: Returns `Python 3.12.x`.
+
+### Step 2: Install Dependencies (When Ready)
+Because the current `.venv` is unpopulated, run:
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+*Expected*: Installs FastAPI, Streamlit, LangGraph, PyMuPDF, sentence-transformers, openpyxl, and dev test packages.
+
+### Step 3: Verify Configuration Non-Secretly
+```powershell
+$env:PYTHONPATH="src;."
+.\.venv\Scripts\python.exe check_supabase.py
+```
+*Expected*: Outputs `URL set: True`, `Key set: True`, `Client initialized OK`.
+
+### Step 4: Run Targeted Unit Tests
+```powershell
+$env:PYTHONPATH="src;."
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_mode_and_excel_flow.py -v
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_api.py -v
+```
+*Expected*: All unit tests pass using mocked vector stores and LLM completions.
+
+### Step 5: Start FastAPI Backend Service
+In **Terminal 1**:
+```powershell
+$env:PYTHONPATH="src;."
+.\.venv\Scripts\python.exe -m uvicorn rag_platform.api.main:app --host 127.0.0.1 --port 8000 --reload
+```
+*Expected*: Logs show `FastAPI application created` and `Embedding model preloaded during FastAPI startup`.
+
+### Step 6: Verify Backend Health & Readiness
+In **Terminal 2**:
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/health"
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/ready"
+```
+*Expected*: Health returns `{"status":"healthy", ...}`; readiness returns `status: "ready"` (or `"degraded"` if database keys are unconfigured).
+
+### Step 7: Start Streamlit Frontend UI
+In **Terminal 2**:
+```powershell
+$env:PYTHONPATH="src;."
+$env:API_BASE_URL="http://127.0.0.1:8000/api/v1"
+.\.venv\Scripts\streamlit.exe run ui/app.py --server.port 8501
+```
+*Expected*: Browser opens at `http://localhost:8501` showing the platform with red/cyan avatars and three top mode buttons.
+
+### Step 8: Test Functional Workflows
+1. **General Q&A Mode**: Click **Q&A**. Ask: *"What is the capital of France?"*. Verify the answer returns immediately with no source expanders (confirming strict retrieval isolation).
+2. **Calculator Tool**: Ask: *"What is 145 * 24 + 18.5 / 2?"*. Verify the response contains the exact computed result (`3489.25`).
+3. **Excel Generation**: Ask: *"Create an Excel sheet with 3 columns: Month, Revenue, Expenses for Q1, Q2, Q3"*. Verify an interactive download button `Download generated_file.xlsx` appears and the downloaded file opens in Excel.
+4. **Knowledge Base Ingestion**: Click **Knowledge Base**, upload a PDF, click **Ingest Document**. Verify the upload completes, and ask a question grounded in that PDF. Verify citations and page numbers appear in the **Retrieved Sources** expander.
+
+### Step 9: Clean Shutdown
+Press `Ctrl + C` in both PowerShell terminal windows.
+
+---
+
+## 10. Tests and Known Risks
+
+### Test Coverage Analysis
+- **Unit Tests (`tests/unit/`)**: Thorough unit coverage exists across 13 test files:
+  - Agent routing & tools ([test_agent.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_agent.py)).
+  - Mode isolation & Excel routing ([test_mode_and_excel_flow.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_mode_and_excel_flow.py)).
+  - API routes & SSE streaming ([test_api.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_api.py)).
+  - Ingestion & OCR fallback ([test_ingestion.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_ingestion.py)).
+  - Vector store & retry handling ([test_vectorstore.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_vectorstore.py)).
+  - MCP client & server ([test_mcp_client.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_mcp_client.py), [test_mcp_server.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/unit/test_mcp_server.py)).
+- **Integration Tests (`tests/integration/`)**:
+  - [test_supabase_smoke.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/tests/integration/test_supabase_smoke.py) checks live database connectivity but safely skips if credentials are missing.
+
+### Key Known Risks & Caveats
+
+1. **Unpopulated Local Environment**:
+   - Running any command now will fail with `ModuleNotFoundError` until `pip install -e ".[dev]"` is run.
+2. **Database Schema Dependencies**:
+   - [001_create_documents_and_chunks.sql](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/src/rag_platform/vectorstore/migrations/001_create_documents_and_chunks.sql) creates `documents`, `chunks`, and `match_chunks`.
+   - **Risk**: Company Research Mode queries a `companies` table, which is *not* created in `001_create_documents_and_chunks.sql`. If that table does not exist in the connected Supabase instance, clicking "Research Mode" will display a UI warning.
+3. **PyTorch Windows Directory Watcher Gotcha**:
+   - Streamlit on Windows frequently encounters `torch.classes.__path__ = []` watcher exceptions. This is handled defensively at line 11 of [ui/app.py](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/ui/app.py#L10-L11), but must be kept in place.
+4. **External LLM Free-Tier Rate Limits**:
+   - The default model in `.env` is `inclusionai/ling-3.0-flash-fin:free` or `nvidia/nemotron-3-ultra-550b-a55b:free`. Free-tier endpoints on OpenRouter occasionally throttle or return HTTP 429/503 during peak usage. The fallback logic in `default_llm_completion` handles this, but response latency can fluctuate.
+5. **Streamlit Community Cloud Deployment Incompatibility**:
+   - Streamlit Community Cloud is single-process and ephemeral. It is **not recommended** to deploy this full architecture directly to Streamlit Cloud unless backed by an externally hosted FastAPI container (e.g., Render, Railway, AWS ECS). Without the FastAPI backend, Excel generation and Company Research mode do not function.
+
+---
+
+## 11. Git and Repository Status
+
+- **Current Branch**: `main`
+- **Current Commit**: `bb68907ed79d16fb2ba91bdf992f79a5f0a02e98` (*"Fix Streamlit package installation"*)
+- **Working Tree**: **Clean** (`nothing to commit, working tree clean`).
+- **Remote Configuration**:
+  - `origin` -> `https://github.com/mubashir-yaseen/RAG_chatbot.git` (fetch & push)
+- **Local vs. Remote Sync**: Local `main` is up to date with `origin/main`.
+- **Pre-Commit**: [.pre-commit-config.yaml](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/.pre-commit-config.yaml) is configured for `ruff` and `check-yaml`.
+- **CI Pipeline**: [.github/workflows/ci.yml](file:///d:/projects/RAG_Github/RAG_chatbot_claude/rag_project/.github/workflows/ci.yml) validates Ruff linting, Mypy type-checking, Pytest coverage on Python 3.11/3.12, and Docker image builds.
+
+---
+
+## 12. Recommended Next Steps
+
+Here is the prioritized list of the **next 4 actions** to get the local application running and verified safely:
+
+1. **Populate the Virtual Environment**:
+   Run `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"` from the project root to install all required dependencies (FastAPI, Uvicorn, Streamlit, LangGraph, sentence-transformers, PyMuPDF, openpyxl, pytest) into the existing virtual environment.
+2. **Execute Unit Tests to Verify Local Code Integrity**:
+   Run `.\.venv\Scripts\python.exe -m pytest tests/unit/ -q` to confirm all 29+ unit tests pass locally on Python 3.12 without touching the database or external network.
+3. **Verify Supabase Schema & RPC**:
+   Run `.\.venv\Scripts\python.exe check_supabase.py`. If tables are missing in the Supabase project, execute `001_create_documents_and_chunks.sql` in the Supabase SQL Editor.
+4. **Launch Backend and Frontend Concurrently**:
+   Start the FastAPI service on port 8000 and the Streamlit interface on port 8501, and verify the three modes (Q&A, Knowledge Base, Research) and Excel export directly in the browser.

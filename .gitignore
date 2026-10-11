@@ -1,0 +1,69 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Streamlit
+.streamlit/
+streamlit_cache/
+
+# Vector stores (optional - remove if you want to commit)
+vector_stores/
+*.faiss
+*.pkl
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+temp/
+tmp/
+
+# PDF uploads (optional)
+uploads/
+*.pdf
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local generated/runtime data
+.coverage
+data/
+generated_files/

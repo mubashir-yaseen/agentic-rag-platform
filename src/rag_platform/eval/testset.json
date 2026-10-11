@@ -1,0 +1,86 @@
+[
+  {
+    "id": "q1",
+    "question": "What was the total revenue for the fiscal year 2023 reported in the financial statement?",
+    "expected_answer": "Total revenue for fiscal year 2023 reached $124.5 million, representing a 14.2% year-over-year increase.",
+    "expected_sources": ["financial_report_2023.pdf", "Page 12"],
+    "ground_truth_context": "For the fiscal year ended December 31, 2023, the Company recorded total consolidated revenue of $124.5 million, reflecting growth of 14.2% compared to $109.0 million in fiscal year 2022."
+  },
+  {
+    "id": "q2",
+    "question": "What are the non-disclosure obligations outlined in Section 4 of the Consulting Agreement?",
+    "expected_answer": "The recipient must hold all proprietary information in strict confidence for 3 years after contract termination and cannot disclose it without written consent.",
+    "expected_sources": ["consulting_agreement.pdf", "Page 4"],
+    "ground_truth_context": "Section 4. Confidentiality Obligations: The Receiving Party agrees to maintain the strict confidentiality of all Proprietary Information disclosed hereunder for a period of three (3) years following termination of this Agreement."
+  },
+  {
+    "id": "q3",
+    "question": "What is the primary vector similarity metric utilized in the pgvector database configuration?",
+    "expected_answer": "The database uses cosine distance similarity indexed via HNSW on vector embeddings.",
+    "expected_sources": ["architecture_spec.pdf", "Page 2"],
+    "ground_truth_context": "Vector embeddings are indexed using Hierarchical Navigable Small World (HNSW) graphs with cosine similarity distance metric vector_cosine_ops."
+  },
+  {
+    "id": "q4",
+    "question": "What were the research and development expenditures for Q4 2023?",
+    "expected_answer": "Research and development expenditures were $18.6 million in Q4 2023.",
+    "expected_sources": ["q4_earnings_release.pdf", "Page 6"],
+    "ground_truth_context": "R&D expenditures in the fourth quarter of 2023 totaled $18.6 million, compared to $15.2 million in the prior year period."
+  },
+  {
+    "id": "q5",
+    "question": "Which OCR engine is used as a fallback when digital text is absent from a PDF document?",
+    "expected_answer": "Tesseract OCR (pytesseract) is used as the primary OCR engine with EasyOCR fallback for scanned pages.",
+    "expected_sources": ["ingestion_pipeline_doc.pdf", "Page 8"],
+    "ground_truth_context": "When PyMuPDF detects fewer than 20 characters on a page, the ingestion pipeline invokes pytesseract OCR with optional EasyOCR fallback."
+  },
+  {
+    "id": "q6",
+    "question": "What is the termination notice period required under the master services agreement?",
+    "expected_answer": "Either party may terminate the agreement with 30 days written notice.",
+    "expected_sources": ["master_services_agreement.pdf", "Page 15"],
+    "ground_truth_context": "Either party may terminate this Master Services Agreement without cause upon providing thirty (30) calendar days prior written notice to the other party."
+  },
+  {
+    "id": "q7",
+    "question": "What gross margin percentage did the company achieve in fiscal year 2023?",
+    "expected_answer": "The company achieved a gross margin of 68.5% in 2023.",
+    "expected_sources": ["financial_report_2023.pdf", "Page 14"],
+    "ground_truth_context": "Gross profit for 2023 was $85.3 million, resulting in a gross margin percentage of 68.5%, up from 66.1% in fiscal year 2022."
+  },
+  {
+    "id": "q8",
+    "question": "How does the MCP server expose knowledge base search to Claude Desktop?",
+    "expected_answer": "Through the query_knowledge_base and list_documents MCP tools communicated over standard input/output JSON-RPC.",
+    "expected_sources": ["mcp_specification.pdf", "Page 3"],
+    "ground_truth_context": "The MCP server registers query_knowledge_base and list_documents tools using stdio JSON-RPC transport to integrate directly into Claude Desktop."
+  },
+  {
+    "id": "q9",
+    "question": "What is the token limit and chunk overlap setting for document chunking?",
+    "expected_answer": "Default chunk size is 1000 characters with an overlap of 200 characters.",
+    "expected_sources": ["system_configuration.pdf", "Page 1"],
+    "ground_truth_context": "The text splitter utilizes a target chunk size of 1000 characters and a chunk overlap of 200 characters to preserve cross-chunk context."
+  },
+  {
+    "id": "q10",
+    "question": "What was the total cash and cash equivalents balance at year-end 2023?",
+    "expected_answer": "Cash and cash equivalents stood at $45.2 million as of December 31, 2023.",
+    "expected_sources": ["financial_report_2023.pdf", "Page 18"],
+    "ground_truth_context": "As of December 31, 2023, the Company held $45.2 million in cash, cash equivalents, and short-term marketable securities."
+  },
+  {
+    "id": "q11",
+    "question": "What fallback strategy does the LangGraph agent use if an external MCP tool server fails?",
+    "expected_answer": "The agent catches the failure, logs a warning, and falls back to internal knowledge retrieval or direct answering without crashing.",
+    "expected_sources": ["agent_architecture.pdf", "Page 7"],
+    "ground_truth_context": "If an external MCP tool call times out or encounters network errors after retrying, the client wraps the error in a safe ToolResult and the agent proceeds."
+  },
+  {
+    "id": "q12",
+    "question": "What is the purpose of correlation IDs in the structured JSON logging configuration?",
+    "expected_answer": "Correlation IDs allow tracing an individual request across ingestion, agent routing, tool calling, and API response lifecycle.",
+    "expected_sources": ["observability_guide.pdf", "Page 5"],
+    "ground_truth_context": "Every incoming user request is tagged with a unique correlation ID stored in contextvars, ensuring all downstream log records and traces share the same identifier."
+  }
+]

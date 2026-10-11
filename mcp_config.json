@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "python",
+      "args": ["-m", "rag_platform.agent.mcp_client", "--server", "filesystem"],
+      "description": "Local filesystem inspection and file reading MCP server",
+      "env": {}
+    },
+    "web_search": {
+      "command": "python",
+      "args": ["-m", "rag_platform.agent.mcp_client", "--server", "web_search"],
+      "description": "Live external web searching and fetching MCP server",
+      "env": {}
+    },
+    "excel": {
+      "command": "python",
+      "args": ["-m", "rag_platform.agent.mcp_client", "--server", "excel"],
+      "description": "Excel (.xlsx) file generation MCP server, takes structured data and produces a workbook",
+      "env": {}
+    }
+  }
+}
