@@ -21,7 +21,12 @@ load_dotenv(find_dotenv())
 settings = get_settings()
 
 SUPABASE_OK = bool(settings.SUPABASE_URL and settings.effective_supabase_key)
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1")
+
+# Robustly read API_BASE_URL from Streamlit Secrets first, then environment variables, falling back to localhost
+try:
+    API_BASE_URL = st.secrets.get("API_BASE_URL", os.getenv("API_BASE_URL", "http://localhost:8000/api/v1"))
+except Exception:
+    API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1")
 
 st.set_page_config(
     page_title="Multimodal RAG Platform | Developed by Mubashir",
@@ -261,12 +266,7 @@ def call_api_chat(
     stream: bool = False,
     result_sink: dict = None,
 ) -> dict:
-    """Send query to FastAPI /chat endpoint, optionally consuming Server-Sent Events incrementally.
-
-    result_sink, when provided, is updated in place with the final payload
-    (sources, tool_outputs, routing_decision) once available, so streaming callers
-    can access that data after exhausting the token generator.
-    """
+    """Send query to FastAPI /chat endpoint, optionally consuming Server-Sent Events incrementally."""
     try:
         current_mode = mode or st.session_state.get("mode")
     except Exception:
@@ -279,15 +279,14 @@ def call_api_chat(
     if current_mode:
         payload["mode"] = current_mode
 
-    # Enforce strict Q&A isolation: do not send document/company scope when UI is in Q&A mode.
     if current_mode != "Q&A":
-        # Only include scope filters when not in Q&A mode
         if doc_id:
             payload["doc_id"] = doc_id
         if content_type and content_type != "all":
             payload["content_type"] = content_type
         if company_id is not None:
             payload["company_id"] = company_id
+            
     if not stream:
         resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=90.0)
         resp.raise_for_status()
@@ -333,11 +332,7 @@ def call_api_chat(
 
 
 def fetch_generated_file_bytes(generated_file: dict) -> Optional[bytes]:
-    """Fetch bytes for an agent-generated file (e.g. an Excel export) for download_button.
-
-    Returns None (rather than raising) on any failure, so a download-button render
-    never crashes the chat UI if the API is briefly unreachable.
-    """
+    """Fetch bytes for an agent-generated file for download_button."""
     if not generated_file or not generated_file.get("file_id"):
         return None
     try:
@@ -397,7 +392,7 @@ def initialize_services() -> bool:
 
 
 def process_multimodal_pdf(uploaded_file) -> bool:
-    """Run multimodal ingestion pipeline and persist chunks to Supabase (via API or local)."""
+    """Run multimodal ingestion pipeline and persist chunks to Supabase."""
     try:
         api_available = check_api_server()
         if api_available:
@@ -406,7 +401,6 @@ def process_multimodal_pdf(uploaded_file) -> bool:
                 st.session_state.selected_doc_id = res.get("doc_id")
                 return True
 
-        # Fallback local ingestion
         if not initialize_services():
             return False
 
@@ -498,8 +492,6 @@ def main():
                     use_container_width=True,
                     type="primary" if is_active else "secondary",
                 ):
-                    # When switching to Q&A, clear any selected document/company to
-                    # ensure strict isolation even if selection persisted.
                     if m == "Q&A":
                         st.session_state.selected_doc_id = None
                         st.session_state.selected_content_type = "all"
@@ -509,7 +501,6 @@ def main():
 
         backend_mode_str = mode_mapping[st.session_state.mode]
 
-        # --- KNOWLEDGE BASE MODE CONTROLS ---
         if st.session_state.mode == "Knowledge Base":
             initialize_services()
             available_docs = []
@@ -633,7 +624,6 @@ def main():
                 placeholder = st.empty()
                 try:
                     generated_file = None
-                    # 1. Prefer FastAPI backend if online
                     if check_api_server():
                         stream_meta: dict = {}
                         if st.session_state.mode == "Research" and st.session_state.current_company:
@@ -670,7 +660,6 @@ def main():
                         sources = []
                         generated_file = (stream_meta.get("tool_outputs") or {}).get("generated_file")
                     else:
-                        # 2. Local fallback
                         initialize_services()
                         rag_sys = st.session_state.rag_system
                         vstore = st.session_state.vector_store
