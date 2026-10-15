@@ -240,6 +240,8 @@ if "selected_content_type" not in st.session_state:
     st.session_state.selected_content_type = "all"
 if "current_company" not in st.session_state:
     st.session_state.current_company = None
+if "backend_awake" not in st.session_state:
+    st.session_state.backend_awake = False
 
 mode_mapping = {
     "Knowledge Base": "Multi-Document Knowledge Base",
@@ -248,13 +250,41 @@ mode_mapping = {
 }
 
 
-def check_api_server() -> bool:
-    """Check if FastAPI backend service is reachable."""
+def check_api_server(timeout: float = 8.0) -> bool:
+    """Check if FastAPI backend service is reachable.
+
+    Render's free tier spins the backend down after ~15 min idle; the next
+    request has to wait through a cold start (can take 30-60s), so a short
+    timeout here would wrongly report the backend as unreachable and fall
+    back to local initialization (which deliberately lacks LLM API keys).
+    """
     try:
-        resp = requests.get(f"{API_BASE_URL}/health", timeout=1.0)
+        resp = requests.get(f"{API_BASE_URL}/health", timeout=timeout)
         return resp.status_code == 200
     except Exception:
         return False
+
+
+def wake_backend_if_needed() -> bool:
+    """Ping the backend once per session, waiting out a cold start if needed.
+
+    Returns True once the backend responds, False if it never comes up.
+    Result is cached in session_state so this only happens once per session,
+    not on every single chat message.
+    """
+    if st.session_state.get("backend_awake"):
+        return True
+
+    if check_api_server(timeout=3.0):
+        st.session_state.backend_awake = True
+        return True
+
+    with st.spinner("Waking up backend service (this can take up to a minute on first use)..."):
+        if check_api_server(timeout=75.0):
+            st.session_state.backend_awake = True
+            return True
+
+    return False
 
 
 def call_api_chat(
@@ -286,7 +316,7 @@ def call_api_chat(
             payload["content_type"] = content_type
         if company_id is not None:
             payload["company_id"] = company_id
-            
+
     if not stream:
         resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=90.0)
         resp.raise_for_status()
@@ -394,7 +424,7 @@ def initialize_services() -> bool:
 def process_multimodal_pdf(uploaded_file) -> bool:
     """Run multimodal ingestion pipeline and persist chunks to Supabase."""
     try:
-        api_available = check_api_server()
+        api_available = wake_backend_if_needed()
         if api_available:
             with st.spinner("Uploading and processing multimodal PDF via FastAPI service..."):
                 res = call_api_ingest(uploaded_file.getvalue(), uploaded_file.name)
@@ -624,7 +654,7 @@ def main():
                 placeholder = st.empty()
                 try:
                     generated_file = None
-                    if check_api_server():
+                    if wake_backend_if_needed():
                         stream_meta: dict = {}
                         if st.session_state.mode == "Research" and st.session_state.current_company:
                             stream_payload = call_api_chat(
