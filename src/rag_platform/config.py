@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     # Embedding Configuration
     EMBEDDING_MODEL: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     HUGGINGFACEHUB_API_TOKEN: str = Field(default="")
+    GOOGLE_API_KEY: str = Field(default="")
 
     # RAG Tuning Parameters
     RAG_CHUNK_SIZE: int = Field(default=1000)
@@ -54,11 +55,6 @@ class Settings(BaseSettings):
     # Vector Store Local Configuration
     VECTOR_STORE_DIR: str = Field(default="vector_stores")
     VECTOR_STORE_BACKEND: str = Field(default="faiss")
-
-    # Controlled output directory for agent-generated files (e.g. Excel exports).
-    # Files are always saved under a UUID-derived name inside this directory;
-    # never derived directly from user-supplied paths.
-    GENERATED_FILES_DIR: str = Field(default="generated_files")
 
     # Observability & Tracing (Langfuse / LangSmith)
     LANGFUSE_PUBLIC_KEY: str = Field(default="")
