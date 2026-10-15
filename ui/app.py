@@ -403,8 +403,31 @@ def call_api_ingest(file_buffer, filename: str) -> dict:
     return resp.json()
 
 
+def init_vector_store_only() -> bool:
+    """Initialize just the Supabase vector store (no LLM key required).
+
+    Used for the document/company dropdowns, which only need to list rows
+    in Supabase. This must NOT build a RAGSystem, since that requires an
+    LLM key (OPENROUTER_API_KEY/OPENAI_API_KEY) that Streamlit Cloud does
+    not have on purpose -- that key belongs only on the FastAPI backend.
+    """
+    try:
+        if st.session_state.vector_store is None and SUPABASE_OK:
+            st.session_state.vector_store = SupabaseVectorStore()
+        return True
+    except Exception as exc:
+        st.error(f"Vector store initialization error: {exc}")
+        return False
+
+
 def initialize_services() -> bool:
-    """Initialize RAGSystem and SupabaseVectorStore."""
+    """Initialize RAGSystem and SupabaseVectorStore.
+
+    This builds the full local RAGSystem and therefore requires an LLM key.
+    Only call this from the genuine local-fallback paths (used when the
+    FastAPI backend is unreachable), never just to populate the sidebar
+    dropdowns -- use init_vector_store_only() for that instead.
+    """
     try:
         if st.session_state.rag_system is None:
             st.session_state.rag_system = RAGSystem(
@@ -532,7 +555,7 @@ def main():
         backend_mode_str = mode_mapping[st.session_state.mode]
 
         if st.session_state.mode == "Knowledge Base":
-            initialize_services()
+            init_vector_store_only()
             available_docs = []
             if st.session_state.vector_store:
                 try:
@@ -586,7 +609,7 @@ def main():
                         st.rerun()
 
         elif st.session_state.mode == "Research":
-            initialize_services()
+            init_vector_store_only()
             companies = []
             vector_store = st.session_state.vector_store
             if vector_store and getattr(vector_store, "client", None):
