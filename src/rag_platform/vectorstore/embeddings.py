@@ -8,9 +8,16 @@ caused deploys to hang and time out).
 Google's Generative Language API offers a genuinely free tier that requires
 only an API key from https://aistudio.google.com/app/apikey -- no credit
 card needed. This module calls it directly over HTTP (no extra heavy
-dependency), producing 768-dimensional vectors (text-embedding-004).
+dependency).
+
+IMPORTANT: "text-embedding-004" was retired by Google in January 2026 and
+now returns 404/400 errors. The current model is "gemini-embedding-001".
+It outputs 3072 dimensions by default; we request output_dimensionality=768
+to match the existing Supabase vector(768) column, and L2-normalize the
+result ourselves since Google only auto-normalizes the full 3072-dim output.
 """
 
+import math
 from functools import lru_cache
 from typing import Any, Optional
 
@@ -21,9 +28,20 @@ from rag_platform.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-GOOGLE_EMBEDDING_MODEL = "models/text-embedding-004"
+GOOGLE_EMBEDDING_MODEL = "models/gemini-embedding-001"
 GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-EMBEDDING_DIMENSIONS = 768
+OUTPUT_DIMENSIONALITY = 768
+
+
+def _l2_normalize(vec: list[float]) -> list[float]:
+    """L2-normalize a vector. Required for gemini-embedding-001 whenever the
+    output is truncated below its native 3072 dimensions (per Google's docs);
+    the full-size output is already normalized, but a truncated one is not.
+    """
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0:
+        return vec
+    return [v / norm for v in vec]
 
 
 class GoogleEmbeddings:
@@ -38,24 +56,34 @@ class GoogleEmbeddings:
         self.api_key = api_key
         self.model = model
 
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts using Google's batchEmbedContents endpoint."""
         if not texts:
             return []
-        url = f"{GOOGLE_API_BASE}/{self.model}:batchEmbedContents?key={self.api_key}"
+        url = f"{GOOGLE_API_BASE}/{self.model}:batchEmbedContents"
         payload = {
             "requests": [
                 {
                     "model": self.model,
                     "content": {"parts": [{"text": text}]},
+                    "taskType": "RETRIEVAL_DOCUMENT",
+                    "output_dimensionality": OUTPUT_DIMENSIONALITY,
                 }
                 for text in texts
             ]
         }
-        resp = requests.post(url, json=payload, timeout=60)
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=60)
+        if resp.status_code != 200:
+            logger.warning("Google embed_documents failed: %s %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
-        embeddings = [item["values"] for item in data.get("embeddings", [])]
+        embeddings = [_l2_normalize(item["values"]) for item in data.get("embeddings", [])]
         if len(embeddings) != len(texts):
             raise RuntimeError(
                 f"Google embedding API returned {len(embeddings)} vectors for {len(texts)} inputs"
@@ -64,15 +92,19 @@ class GoogleEmbeddings:
 
     def embed_query(self, text: str) -> list[float]:
         """Embed a single query string using Google's embedContent endpoint."""
-        url = f"{GOOGLE_API_BASE}/{self.model}:embedContent?key={self.api_key}"
+        url = f"{GOOGLE_API_BASE}/{self.model}:embedContent"
         payload = {
             "model": self.model,
             "content": {"parts": [{"text": text}]},
+            "taskType": "RETRIEVAL_QUERY",
+            "output_dimensionality": OUTPUT_DIMENSIONALITY,
         }
-        resp = requests.post(url, json=payload, timeout=30)
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=30)
+        if resp.status_code != 200:
+            logger.warning("Google embed_query failed: %s %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
-        return data["embedding"]["values"]
+        return _l2_normalize(data["embedding"]["values"])
 
 
 @lru_cache(maxsize=4)
@@ -105,7 +137,7 @@ def get_embedding_model(model_name: Optional[str] = None) -> Any:
 def warmup_embedding_model(model_name: Optional[str] = None) -> Any:
     """Preload the embedding client once per process.
 
-    This is now cheap (no local model weights to load), so it no longer adds
+    This is cheap (no local model weights to load), so it does not add
     meaningful time to app startup.
     """
     return get_embedding_model(model_name)
