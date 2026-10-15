@@ -7,10 +7,9 @@ import tempfile
 import time
 import uuid
 from typing import AsyncGenerator, Optional
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 
-from rag_platform.agent.excel_tool import resolve_generated_file_path, sanitize_excel_filename
 from rag_platform.agent.graph import AgentResult, run_agent
 from rag_platform.api.schemas import (
     ChatRequest,
@@ -113,9 +112,9 @@ async def ingest_document(
                             f"Mismatch in embeddings count: generated {len(embeddings)} for {len(ingest_result.chunks)} chunks"
                         )
                     for i, emb in enumerate(embeddings):
-                        if not emb or len(emb) != 384:
+                        if not emb or len(emb) != 768:
                             raise IngestionError(
-                                f"Invalid embedding dimension for chunk {i}: expected 384, got {len(emb) if emb else 0}"
+                                f"Invalid embedding dimension for chunk {i}: expected 768, got {len(emb) if emb else 0}"
                             )
                         ingest_result.chunks[i].embedding = emb
                 except IngestionError:
@@ -157,7 +156,7 @@ async def ingest_document(
             os.unlink(tmp_path)
 
 
-async def _sse_generator(request: ChatRequest, doc_filters: Optional[dict], allow_retrieval: bool) -> AsyncGenerator[str, None]:
+async def _sse_generator(request: ChatRequest, doc_filters: Optional[dict]) -> AsyncGenerator[str, None]:
     """Stream agent execution steps and final answer tokens via SSE without disturbing the JSON path."""
     request_start = time.perf_counter()
     corr_id = get_correlation_id()
@@ -166,12 +165,7 @@ async def _sse_generator(request: ChatRequest, doc_filters: Optional[dict], allo
         yield f"data: {json.dumps({'event': 'start', 'query': request.query, 'correlation_id': corr_id})}\n\n"
         await asyncio.sleep(0.01)
 
-        result = run_agent(
-            query=request.query,
-            doc_filters=doc_filters,
-            allow_retrieval=allow_retrieval,
-            mode=request.mode,
-        )
+        result = run_agent(query=request.query, doc_filters=doc_filters)
         for step in result.reasoning_path:
             yield f"data: {json.dumps({'event': 'reasoning', 'step': step})}\n\n"
             await asyncio.sleep(0.01)
@@ -198,34 +192,17 @@ async def chat_endpoint(request: ChatRequest):
     request_start = time.perf_counter()
     logger.info("PERF: api_request_start")
 
-    # Respect client-declared UI mode to enforce strict isolation server-side.
-    mode = (request.mode or "").strip()
-    is_qna = bool(mode and mode.lower() in ("q&a", "qa", "qna", "general q&a", "general q&a mode"))
-
-    # If client indicates Q&A mode, enforce no document/company scope regardless
-    # of what the client supplied; this prevents accidental retrieval leakage.
-    if is_qna:
-        doc_filters = None
-        allow_retrieval_flag = False
-    else:
-        # Start with any explicit doc_filters provided, but we'll modify according to mode
-        doc_filters = dict(request.doc_filters or {})
-        if request.doc_id:
-            doc_filters["doc_id"] = request.doc_id
-        if request.content_type and request.content_type != "all":
-            doc_filters["content_type"] = request.content_type
-        if request.company_id:
-            doc_filters["company_id"] = request.company_id
-        allow_retrieval_flag = True
-
-    # Research mode requires an explicit selected company; reject otherwise.
-    if mode and mode.lower() in ("research",):
-        if not (request.company_id or (doc_filters and doc_filters.get("company_id"))):
-            raise HTTPException(status_code=400, detail="Research mode requests must include a company_id or select a company.")
+    doc_filters = dict(request.doc_filters or {})
+    if request.doc_id:
+        doc_filters["doc_id"] = request.doc_id
+    if request.content_type and request.content_type != "all":
+        doc_filters["content_type"] = request.content_type
+    if request.company_id:
+        doc_filters["company_id"] = request.company_id
 
     if request.stream:
         return StreamingResponse(
-            _sse_generator(request, doc_filters if doc_filters else None, allow_retrieval=allow_retrieval_flag),
+            _sse_generator(request, doc_filters if doc_filters else None),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -234,12 +211,7 @@ async def chat_endpoint(request: ChatRequest):
             },
         )
 
-    result = run_agent(
-        query=request.query,
-        doc_filters=doc_filters if doc_filters else None,
-        allow_retrieval=allow_retrieval_flag,
-        mode=mode,
-    )
+    result = run_agent(query=request.query, doc_filters=doc_filters if doc_filters else None)
     logger.info("PERF: api_request_total=%.2fs", time.perf_counter() - request_start)
     return ChatResponse(
         query=request.query,
@@ -257,23 +229,3 @@ async def run_eval_endpoint(limit: Optional[int] = Query(default=None, ge=1, le=
     """Run automated RAGAS evaluation over labeled benchmark test set."""
     logger.info("Triggering API evaluation benchmark (limit=%s)", limit)
     return run_evaluation(limit=limit)
-
-
-@router.get("/files/{file_id}", summary="Download an Agent-Generated File")
-async def download_generated_file(file_id: str, filename: Optional[str] = Query(default=None)):
-    """Serve a previously agent-generated file (e.g. an Excel export).
-
-    file_id is an opaque UUID-hex token; resolve_generated_file_path validates its
-    shape and confirms the resolved path stays inside the controlled output directory
-    before anything is served, so this endpoint cannot be used for path traversal.
-    """
-    path = resolve_generated_file_path(file_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="Generated file not found or has expired.")
-
-    display_name = sanitize_excel_filename(filename) if filename else path.name
-    return FileResponse(
-        path=str(path),
-        filename=display_name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
