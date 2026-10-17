@@ -1,4 +1,4 @@
-"""LangGraph orchestration graph for Agentic RAG Platform with free-tier model rotation and failure fallbacks."""
+"""LangGraph orchestration graph for Agentic RAG Platform with free-tier model rotation and robust argument compatibility."""
 
 import logging
 from dataclasses import dataclass, field
@@ -43,7 +43,6 @@ def get_llm(temperature: float = 0.1) -> ChatOpenAI:
     if not api_key:
         raise ValueError("Missing LLM API key. Provide OPENROUTER_API_KEY.")
 
-    # Prioritized list of stable free-tier models specified for seamless fallback rotation
     free_models = [
         "openrouter/free",
         "nvidia/nemotron-3.5-lightning:free",
@@ -53,18 +52,16 @@ def get_llm(temperature: float = 0.1) -> ChatOpenAI:
         "google/gemma-4-26b-a4b-it:free",
     ]
 
-    # Pick the configured model if valid, otherwise default to the first in the rotation list
     primary_model = settings.LLM_MODEL if settings.LLM_MODEL and "free" in settings.LLM_MODEL else free_models[0]
     
-    # Construct fallback chain or primary client with aggressive timeout safeguards
     return ChatOpenAI(
         model=primary_model,
         temperature=temperature,
         openai_api_key=api_key,
         openai_api_base=settings.OPENROUTER_BASE_URL,
-        max_tokens=512,  # Shortened token limit to prevent free-tier throttling
-        request_timeout=20.0,  # Fail fast on overloaded 503 nodes so it rolls over quickly
-        max_retries=2,  # Automatically retry across available free endpoints
+        max_tokens=512,
+        request_timeout=20.0,
+        max_retries=2,
     )
 
 
@@ -150,14 +147,15 @@ def run_agent(
     doc_id: str | None = None,
     content_type: str | None = None,
     company_id: str | None = None,
+    **kwargs: Any,
 ) -> AgentResult:
-    """Execute the compiled agent graph for a given user query."""
+    """Execute the compiled agent graph for a given user query with full parameter compatibility."""
     try:
         graph = create_agent_graph()
         initial_state: AgentState = {
             "query": query,
             "mode": mode,
-            "doc_id": doc_id,
+            "doc_id": doc_id or kwargs.get("doc_filters"),
             "content_type": content_type,
             "company_id": company_id,
             "routing_decision": "direct",
