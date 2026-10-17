@@ -1,6 +1,7 @@
-"""LangGraph orchestration graph for Agentic RAG Platform with explicit timeout safeguards."""
+"""LangGraph orchestration graph for Agentic RAG Platform with full backwards compatibility and timeout safeguards."""
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,6 +26,16 @@ class AgentState(TypedDict):
     error: str | None
 
 
+@dataclass
+class AgentResult:
+    """Structured result returned by agent execution."""
+    response: str
+    sources: List[Any] = field(default_factory=list)
+    tool_outputs: Dict[str, Any] = field(default_factory=dict)
+    routing_decision: str = "direct"
+    error: str | None = None
+
+
 def get_llm(temperature: float = 0.1) -> ChatOpenAI:
     """Initialize ChatOpenAI pointing to OpenRouter with hardcoded safety timeouts."""
     settings = get_settings()
@@ -37,8 +48,8 @@ def get_llm(temperature: float = 0.1) -> ChatOpenAI:
         temperature=temperature,
         openai_api_key=api_key,
         openai_api_base=settings.OPENROUTER_BASE_URL,
-        max_tokens=1024,  # Prevents runaway generation loops
-        request_timeout=30.0,  # Fails fast instead of hanging indefinitely
+        max_tokens=1024,  # Prevents runaway generation loops and stays within budget
+        request_timeout=30.0,  # Fails fast instead of hanging indefinitely on 503s
         max_retries=1,  # Avoids compounding fallback delays
     )
 
@@ -101,8 +112,8 @@ def responder_node(state: AgentState) -> AgentState:
     return state
 
 
-def build_graph():
-    """Construct the compiled LangGraph workflow."""
+def create_agent_graph():
+    """Construct and compile the LangGraph workflow graph."""
     from langgraph.graph import END, StateGraph
     workflow = StateGraph(AgentState)
     
@@ -114,3 +125,45 @@ def build_graph():
     workflow.add_edge("responder", END)
     
     return workflow.compile()
+
+
+def run_agent(
+    query: str,
+    mode: str = "Knowledge Base",
+    doc_id: str | None = None,
+    content_type: str | None = None,
+    company_id: str | None = None,
+) -> AgentResult:
+    """Execute the compiled agent graph for a given user query."""
+    try:
+        graph = create_agent_graph()
+        initial_state: AgentState = {
+            "query": query,
+            "mode": mode,
+            "doc_id": doc_id,
+            "content_type": content_type,
+            "company_id": company_id,
+            "routing_decision": "direct",
+            "retrieved_docs": [],
+            "tool_outputs": {},
+            "response": "",
+            "error": None,
+        }
+        final_state = graph.invoke(initial_state)
+        return AgentResult(
+            response=final_state.get("response", "No response generated."),
+            sources=final_state.get("retrieved_docs", []),
+            tool_outputs=final_state.get("tool_outputs", {}),
+            routing_decision=final_state.get("routing_decision", "direct"),
+            error=final_state.get("error"),
+        )
+    except Exception as exc:
+        logger.error("Agent execution failed: %s", exc)
+        return AgentResult(
+            response=f"An error occurred while processing your request: {str(exc)}",
+            error=str(exc),
+        )
+
+
+# Alias for internal imports
+build_graph = create_agent_graph
