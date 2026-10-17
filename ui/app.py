@@ -266,7 +266,7 @@ def call_api_chat(
     stream: bool = False,
     result_sink: dict = None,
 ) -> dict:
-    """Send query to FastAPI /chat endpoint with a safe 120-second timeout."""
+    """Send query to FastAPI /chat endpoint with resilient timeout handling for free-tier servers."""
     try:
         current_mode = mode or st.session_state.get("mode")
     except Exception:
@@ -287,48 +287,55 @@ def call_api_chat(
         if company_id is not None:
             payload["company_id"] = company_id
             
-    if not stream:
-        resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
-        if result_sink is not None:
-            result_sink.update(
-                {
-                    "sources": data.get("sources", []),
-                    "tool_outputs": data.get("tool_outputs", {}),
-                    "routing_decision": data.get("routing_decision"),
-                }
-            )
-        return data
+    try:
+        if not stream:
+            resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=90.0)
+            resp.raise_for_status()
+            data = resp.json()
+            if result_sink is not None:
+                result_sink.update(
+                    {
+                        "sources": data.get("sources", []),
+                        "tool_outputs": data.get("tool_outputs", {}),
+                        "routing_decision": data.get("routing_decision"),
+                    }
+                )
+            return data
 
-    resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=120.0, stream=True)
-    resp.raise_for_status()
-    collected = []
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line or not line.startswith("data:"):
-            continue
-        try:
-            event = json.loads(line.replace("data:", "", 1).strip())
-        except json.JSONDecodeError:
-            continue
-        if event.get("event") == "token":
-            chunk = event.get("text", "")
-            collected.append(chunk)
-            yield chunk
-        elif event.get("event") in {"end", "error"}:
-            if event.get("event") == "end":
-                if result_sink is not None:
-                    result_sink.update(
-                        {
-                            "sources": event.get("sources", []),
-                            "tool_outputs": event.get("tool_outputs", {}),
-                            "routing_decision": event.get("routing_decision"),
-                        }
-                    )
-                break
-            raise RuntimeError(event.get("error", "Stream ended with an error"))
-    if not collected:
-        raise RuntimeError("No streamed content was received from the API.")
+        resp = requests.post(f"{API_BASE_URL}/chat", json=payload, timeout=90.0, stream=True)
+        resp.raise_for_status()
+        collected = []
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            try:
+                event = json.loads(line.replace("data:", "", 1).strip())
+            except json.JSONDecodeError:
+                continue
+            if event.get("event") == "token":
+                chunk = event.get("text", "")
+                collected.append(chunk)
+                yield chunk
+            elif event.get("event") in {"end", "error"}:
+                if event.get("event") == "end":
+                    if result_sink is not None:
+                        result_sink.update(
+                            {
+                                "sources": event.get("sources", []),
+                                "tool_outputs": event.get("tool_outputs", {}),
+                                "routing_decision": event.get("routing_decision"),
+                            }
+                        )
+                    break
+                raise RuntimeError(event.get("error", "Stream ended with an error"))
+        if not collected:
+            raise RuntimeError("No streamed content was received from the API.")
+            
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            "The free-tier backend is currently waking up or handling high traffic. "
+            "Please wait 10 seconds and try your query again."
+        )
 
 
 def fetch_generated_file_bytes(generated_file: dict) -> Optional[bytes]:
@@ -711,7 +718,14 @@ def main():
             )
             st.session_state["llm_model"] = st.selectbox(
                 "LLM Model",
-                ["openrouter/free", "nvidia/nemotron-3-ultra-550b-a55b:free", "openai/gpt-4o-mini"],
+                [
+                    "openrouter/free",
+                    "nvidia/nemotron-3.5-lightning:free",
+                    "nvidia/nemotron-3-ultra-550b-a55b:free",
+                    "nvidia/nemotron-3-super-120b-a12b:free",
+                    "nvidia/nemotron-3.5-super-vl:free",
+                    "google/gemma-4-26b-a4b-it:free",
+                ],
             )
             st.session_state["temperature"] = st.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
             st.session_state["k_results"] = st.slider("Retrieved Chunks Count", 1, 10, 4)
