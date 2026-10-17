@@ -1,16 +1,14 @@
 """LangGraph orchestration graph for Agentic RAG Platform with explicit timeout safeguards."""
 
-import json
 import logging
 from typing import Any, Dict, List, TypedDict
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from rag_platform.config import get_settings
-from rag_platform.logging_config import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict):
@@ -40,7 +38,7 @@ def get_llm(temperature: float = 0.1) -> ChatOpenAI:
         openai_api_key=api_key,
         openai_api_base=settings.OPENROUTER_BASE_URL,
         max_tokens=1024,  # Prevents runaway generation loops
-        request_timeout=30.0,  # Fails fast instead of hanging for 400+ seconds
+        request_timeout=30.0,  # Fails fast instead of hanging indefinitely
         max_retries=1,  # Avoids compounding fallback delays
     )
 
@@ -58,7 +56,7 @@ def router_node(state: AgentState) -> AgentState:
             "You are a routing supervisor. Decide the best execution path for the user query.\n"
             "Options:\n"
             "1. 'vector_search': If the query requires looking up documents, PDFs, or knowledge base chunks.\n"
-            "2. 'sql_tool' or 'excel_tool': If the query asks for financial metrics, reports, or table generation.\n"
+            "2. 'excel_tool': If the query asks for financial metrics, reports, or table generation.\n"
             "3. 'direct': For general questions, summaries, or casual conversation.\n"
             f"User Query: {state['query']}\n"
             "Output ONLY the decision keyword: vector_search, excel_tool, or direct."
