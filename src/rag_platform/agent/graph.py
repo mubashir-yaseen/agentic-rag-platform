@@ -1,4 +1,4 @@
-"""LangGraph orchestration graph for Agentic RAG Platform with free-tier model rotation and robust argument compatibility."""
+"""LangGraph orchestration graph for Agentic RAG Platform with full API parameter compatibility and free-tier safeguards."""
 
 import logging
 from dataclasses import dataclass, field
@@ -147,15 +147,18 @@ def run_agent(
     doc_id: str | None = None,
     content_type: str | None = None,
     company_id: str | None = None,
+    doc_filters: str | None = None,
     **kwargs: Any,
 ) -> AgentResult:
-    """Execute the compiled agent graph for a given user query with full parameter compatibility."""
+    """Execute the compiled agent graph for a given user query with complete API signature safety."""
     try:
         graph = create_agent_graph()
+        resolved_doc_id = doc_id or doc_filters or kwargs.get("doc_filters")
+        
         initial_state: AgentState = {
             "query": query,
             "mode": mode,
-            "doc_id": doc_id or kwargs.get("doc_filters"),
+            "doc_id": resolved_doc_id,
             "content_type": content_type,
             "company_id": company_id,
             "routing_decision": "direct",
