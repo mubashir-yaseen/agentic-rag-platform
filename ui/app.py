@@ -66,11 +66,14 @@ API_BASE_URL = str(API_BASE_URL).rstrip("/")
 APP_TITLE = "Multimodal Agentic RAG"
 MODES = ["Knowledge Base", "Research", "Q&A"]
 MODE_HELP = {
-    "Knowledge Base": "Ask questions about your uploaded documents.",
+    "Knowledge Base": "Upload a PDF, then ask questions about it.",
     "Research": "Pick a company and research its filings.",
     "Q&A": "General assistant with tools. Your documents are not used.",
 }
 ALL_DOCS = "__all__"
+MAX_DOCS_PER_VISITOR = 5
+MAX_UPLOAD_MB = 15
+NO_DOCS_MESSAGE = "Please upload a document first, then ask any question related to your uploaded document."
 CONTENT_TYPES = {"All content": None, "Text": "text", "Tables": "table", "Images / figures": "image"}
 
 SUGGESTIONS = {
@@ -128,7 +131,13 @@ html, body, .stApp, [data-testid="stAppViewContainer"]{
   position:sticky; top:3.75rem; z-index:90; background:var(--bg); margin-bottom:1rem;
 }
 .st-key-toolbar{padding:.35rem 0 .5rem 0;}
-[data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer{display:none !important;}
+/* Hide the Deploy button, menu and footer, but NOT the whole toolbar: newer Streamlit keeps the
+   "open sidebar" arrow inside it, and hiding it made a collapsed sidebar impossible to reopen. */
+[data-testid="stDecoration"], #MainMenu, footer, [data-testid="stMainMenu"],
+[data-testid="stAppDeployButton"], [data-testid="stToolbarActions"], .stAppDeployButton{display:none !important;}
+[data-testid="stToolbar"]{background:transparent !important;}
+[data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"]{visibility:visible !important; color:var(--text) !important;}
 
 /* ---------- main column ---------- */
 [data-testid="stMainBlockContainer"], .block-container{
@@ -376,10 +385,11 @@ def stream_chat(payload: dict[str, Any], sink: dict[str, Any]) -> Iterator[str]:
         raise BackendError("The server returned an empty response.")
 
 
-def call_api_ingest(data: bytes, filename: str) -> dict[str, Any]:
+def call_api_ingest(data: bytes, filename: str, owner: Optional[str] = None) -> dict[str, Any]:
     resp = requests.post(
         f"{API_BASE_URL}/ingest",
         files={"file": (filename, data, "application/pdf")},
+        data={"owner": owner} if owner else None,
         timeout=300.0,
     )
     _raise_for_backend(resp)
@@ -424,6 +434,35 @@ def load_documents(force: bool = False) -> list[Any]:
                 st.session_state.docs_error = str(exc)[:200]
         st.session_state.docs = docs
     return st.session_state.docs
+
+
+def _doc_owner(doc: Any) -> Optional[str]:
+    meta = getattr(doc, "metadata", None)
+    return meta.get("owner") if isinstance(meta, dict) else None
+
+
+def my_documents() -> list[Any]:
+    """Documents uploaded by this visitor (newest first). Annual reports and other people's files are excluded."""
+    vid = st.session_state.get("visitor_id")
+    return [d for d in load_documents() if _doc_owner(d) == vid]
+
+
+def managed_documents() -> list[Any]:
+    """What the sidebar lists: everything for the admin, otherwise only this visitor's own files."""
+    return load_documents() if is_admin() else my_documents()
+
+
+def can_delete(doc: Any) -> bool:
+    return is_admin() or _doc_owner(doc) == st.session_state.get("visitor_id")
+
+
+def sync_scope_doc() -> None:
+    """Always keep a valid document selected: the newest one of this visitor, or none."""
+    ids = [d.doc_id for d in my_documents()]
+    if not ids:
+        st.session_state.scope_doc = None
+    elif st.session_state.get("scope_doc") not in ids:
+        st.session_state.scope_doc = ids[0]
 
 
 def load_companies() -> list[dict[str, Any]]:
@@ -472,7 +511,7 @@ def init_state() -> None:
     ss.setdefault("messages", [])
     ss.setdefault("mode_sel", "Knowledge Base")
     ss.setdefault("_last_mode", "Knowledge Base")
-    ss.setdefault("scope_doc", ALL_DOCS)
+    ss.setdefault("scope_doc", None)
     ss.setdefault("scope_type", "All content")
     ss.setdefault("scope_company", None)
     ss.setdefault("backend_awake", False)
@@ -561,8 +600,9 @@ def _group_label(ts: Any) -> str:
 
 
 def is_admin() -> bool:
-    """Uploads/deletes are open unless an ADMIN_PASSWORD secret is set."""
-    return (not _secret("ADMIN_PASSWORD")) or bool(st.session_state.get("admin_ok"))
+    """Admin = ADMIN_PASSWORD is configured and was entered. Admins can see and delete every document.
+    Everyone can upload (Knowledge Base only) and delete their own files."""
+    return bool(_secret("ADMIN_PASSWORD")) and bool(st.session_state.get("admin_ok"))
 
 
 def _try_unlock() -> None:
@@ -578,10 +618,14 @@ def _delete_document(doc_id: str) -> None:
     vs = get_vector_store()
     if vs is None:
         return
+    target = next((d for d in load_documents() if d.doc_id == doc_id), None)
+    if target is None or not can_delete(target):
+        st.toast("You can only delete documents you uploaded.", icon=":material/lock:")
+        return
     try:
         vs.delete_document(doc_id)
         if st.session_state.get("scope_doc") == doc_id:
-            st.session_state.scope_doc = ALL_DOCS
+            st.session_state.scope_doc = None
         st.session_state.docs = None
         st.toast("Document deleted.", icon=":material/delete:")
     except Exception as exc:
@@ -674,16 +718,16 @@ def render_sidebar(store) -> None:
 
 
 def render_documents_panel() -> None:
-    docs = load_documents()
+    docs = managed_documents()
     with st.expander(f"Documents ({len(docs)})", expanded=False, icon=":material/description:"):
         if st.session_state.get("docs_error"):
             st.caption(f"Could not load documents: {st.session_state.docs_error}")
         if not docs:
-            st.caption("No documents yet.")
+            st.caption("No documents yet. Switch to Knowledge Base and attach a PDF.")
         for doc in docs:
             c1, c2 = st.columns([0.78, 0.22], vertical_alignment="center")
             c1.markdown(f"<div style='font-size:.82rem'>{html.escape(doc.filename)}</div>", unsafe_allow_html=True)
-            if is_admin():
+            if can_delete(doc):
                 with c2:
                     with st.popover("", icon=":material/delete:", use_container_width=True):
                         st.caption("Delete this document and its chunks?")
@@ -694,10 +738,12 @@ def render_documents_panel() -> None:
                             args=(doc.doc_id,),
                             use_container_width=True,
                         )
+        if not is_admin():
+            st.caption(f"Only you can see the files you upload (up to {MAX_DOCS_PER_VISITOR}).")
         if st.button("Refresh list", key="refresh_docs", icon=":material/refresh:", use_container_width=True):
             load_documents(force=True)
             st.rerun()
-        if is_admin() and not _supports_chat_files():
+        if current_mode() == "Knowledge Base" and not _supports_chat_files():
             up = st.file_uploader("Upload PDF", type="pdf", key="side_uploader")
             if up is not None and st.button("Index this PDF", key="side_index", use_container_width=True):
                 ingest_uploaded(up)
@@ -708,11 +754,11 @@ def render_admin_panel() -> None:
     if not _secret("ADMIN_PASSWORD"):
         return
     if st.session_state.get("admin_ok"):
-        st.markdown("<div class='side-note'>Admin unlocked: uploads and deletes enabled.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='side-note'>Admin unlocked: you can see and delete every document.</div>", unsafe_allow_html=True)
         return
     with st.expander("Admin", icon=":material/lock:"):
         st.text_input("Password", type="password", key="admin_pw_input", label_visibility="collapsed", placeholder="Admin password")
-        st.button("Unlock uploads", key="admin_unlock", on_click=_try_unlock, use_container_width=True)
+        st.button("Unlock", key="admin_unlock", on_click=_try_unlock, use_container_width=True)
         if st.session_state.pop("admin_fail", False):
             st.caption("Wrong password.")
 
@@ -752,10 +798,10 @@ def scope_label(mode: str) -> tuple[str, str]:
         company = _selected_company()
         return (company.get("name", "Select company") if company else "Select company"), ":material/domain:"
     doc_id = st.session_state.get("scope_doc")
-    if doc_id and doc_id != ALL_DOCS:
-        name = next((d.filename for d in load_documents() if d.doc_id == doc_id), "Selected document")
+    if doc_id:
+        name = next((d.filename for d in my_documents() if d.doc_id == doc_id), "Selected document")
         return (name if len(name) <= 26 else name[:25] + "…"), ":material/description:"
-    return "All documents", ":material/folder_open:"
+    return "No document yet", ":material/upload_file:"
 
 
 def _selected_company() -> Optional[dict[str, Any]]:
@@ -787,11 +833,14 @@ def render_scope_controls(mode: str) -> None:
         st.selectbox("Company", ids, key="scope_company", format_func=lambda i: names.get(i, str(i)))
         return
 
-    docs = load_documents()
-    ids = [ALL_DOCS] + [d.doc_id for d in docs]
-    names = {ALL_DOCS: "All documents (search everything)", **{d.doc_id: d.filename for d in docs}}
+    docs = my_documents()
+    if not docs:
+        st.caption("No documents yet. Attach a PDF with the + button in the message box.")
+        return
+    ids = [d.doc_id for d in docs]
+    names = {d.doc_id: d.filename for d in docs}
     if st.session_state.get("scope_doc") not in ids:
-        st.session_state.scope_doc = ALL_DOCS
+        st.session_state.scope_doc = ids[0]
     st.selectbox("Search in", ids, key="scope_doc", format_func=lambda i: names.get(i, str(i)))
     st.selectbox("Content type", list(CONTENT_TYPES.keys()), key="scope_type")
 
@@ -809,8 +858,9 @@ def build_payload(prompt: str, mode: str) -> dict[str, Any]:
         # A PDF attached together with a question is searched immediately, even
         # though the scope widget only updates on the next run.
         doc_id = st.session_state.pop("_scope_override", None) or st.session_state.get("scope_doc")
-        if doc_id and doc_id != ALL_DOCS:
+        if doc_id:
             payload["doc_id"] = doc_id
+        # (the owner id is the visitor's own anonymous id: only their documents are ever listed)
     if ctype:
         payload["content_type"] = ctype
     return payload
@@ -884,6 +934,20 @@ def render_message(msg: dict[str, Any], idx: int, is_last: bool) -> None:
 
 
 def render_empty_state(mode: str) -> None:
+    if mode == "Knowledge Base" and not my_documents():
+        attach_hint = (
+            f"Use the + button in the message box to attach a PDF (up to {MAX_UPLOAD_MB} MB)."
+            if _supports_chat_files()
+            else "Open Documents in the left sidebar to upload a PDF."
+        )
+        st.markdown(
+            "<div class='hero'><div class='spark'>✦</div>"
+            "<h1>Upload a document to get started</h1>"
+            f"<p>{html.escape(NO_DOCS_MESSAGE)}</p>"
+            f"<p style='font-size:.85rem;opacity:.8'>{html.escape(attach_hint)}</p></div>",
+            unsafe_allow_html=True,
+        )
+        return
     st.markdown(
         "<div class='hero'><div class='spark'>✦</div>"
         f"<h1>{'What should we look into?' if mode != 'Q&A' else 'How can I help today?'}</h1>"
@@ -913,10 +977,18 @@ def ingest_uploaded(file) -> bool:
     conv_id = ensure_conversation(store, f"Uploaded {file.name}", mode)
     slot = st.empty()
     try:
+        if not file.name.lower().endswith(".pdf"):
+            raise BackendError("Only PDF files are supported.")
+        if file.size > MAX_UPLOAD_MB * 1024 * 1024:
+            raise BackendError(f"The file is {file.size / 1024 / 1024:.1f} MB; the limit is {MAX_UPLOAD_MB} MB.")
+        if not is_admin() and len(my_documents()) >= MAX_DOCS_PER_VISITOR:
+            raise BackendError(
+                f"You already have {MAX_DOCS_PER_VISITOR} documents. Delete one in the sidebar (Documents) to upload another."
+            )
         if not ensure_backend(slot):
             raise BackendError("The server did not wake up in time. Please try again in a minute.")
         with st.spinner(f"Indexing {file.name} (extracting text, tables and images, then embedding)..."):
-            res = call_api_ingest(file.getvalue(), file.name)
+            res = call_api_ingest(file.getvalue(), file.name, st.session_state.get("visitor_id"))
     except Exception as exc:
         text = f"I couldn't index **{file.name}**: {exc}"
         _append(store, conv_id, "assistant", text, meta={"error": True, "notice": True})
@@ -963,6 +1035,10 @@ def answer_turn(prompt: str, add_user: bool = True) -> None:
         with st.chat_message("user"):
             st.markdown(prompt)
     scroll_to_latest()
+
+    if mode == "Knowledge Base" and not st.session_state.get("_scope_override") and not my_documents():
+        _append(store, conv_id, "assistant", NO_DOCS_MESSAGE, meta={"notice": True}, persist=False)
+        return
 
     if mode == "Research" and not _selected_company():
         _append(store, conv_id, "assistant", "Pick a company in the scope menu (top right) to start researching.", meta={"error": True, "notice": True})
@@ -1026,7 +1102,7 @@ def main() -> None:
         page_title=f"{APP_TITLE} | Mubashir",
         page_icon="logo.png" if os.path.exists("logo.png") else None,
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     st.markdown(CSS, unsafe_allow_html=True)
     init_state()
@@ -1034,6 +1110,7 @@ def main() -> None:
     st.session_state.pop("_scope_override", None)
     store = current_store()
 
+    sync_scope_doc()
     render_sidebar(store)
     render_toolbar()
     mode = current_mode()
@@ -1046,9 +1123,10 @@ def main() -> None:
     if st.session_state.pop("_scroll", False) and messages:
         scroll_to_latest()
 
-    can_attach = _supports_chat_files() and is_admin()
+    can_attach = _supports_chat_files() and mode == "Knowledge Base"  # uploads: Knowledge Base only
+    has_docs = bool(my_documents())
     placeholder = {
-        "Knowledge Base": "Ask about your documents",
+        "Knowledge Base": "Ask about your document" if has_docs else "Attach a PDF to begin, then ask about it",
         "Research": "Ask about the selected company",
         "Q&A": "Ask anything",
     }[mode]
