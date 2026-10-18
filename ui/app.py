@@ -64,11 +64,19 @@ except Exception:
 API_BASE_URL = str(API_BASE_URL).rstrip("/")
 
 APP_TITLE = "Multimodal Agentic RAG"
-MODES = ["Knowledge Base", "Research", "Q&A"]
+# Internal mode names (used by the API, the agent and saved chats) never change; only the label
+# shown on screen does.
+MODES = ["Q&A", "Knowledge Base", "Research"]
+MODE_LABELS = {
+    "Q&A": "General Q&A",
+    "Knowledge Base": "My Documents",
+    "Research": "Company Research",
+}
+DEFAULT_MODE = "Q&A"
 MODE_HELP = {
+    "Q&A": "Ask anything. Calculator, web search and Excel export are included. Your documents are not used.",
     "Knowledge Base": "Upload a PDF, then ask questions about it.",
-    "Research": "Pick a company and research its filings.",
-    "Q&A": "General assistant with tools. Your documents are not used.",
+    "Research": "Pick a company and research its annual reports.",
 }
 ALL_DOCS = "__all__"
 MAX_DOCS_PER_VISITOR = 5
@@ -127,7 +135,10 @@ html, body, .stApp, [data-testid="stAppViewContainer"]{
   font-family:-apple-system,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
 }
 [data-testid="stHeader"]{background:var(--bg) !important;}
-[data-testid="stVerticalBlockBorderWrapper"]:has(> div > .st-key-toolbar){
+/* keep the mode switch pinned under the header (the wrapper element is named differently
+   in older and newer Streamlit, so both are listed) */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > .st-key-toolbar),
+[data-testid="stLayoutWrapper"]:has(> .st-key-toolbar){
   position:sticky; top:3.75rem; z-index:90; background:var(--bg); margin-bottom:1rem;
 }
 .st-key-toolbar{padding:.35rem 0 .5rem 0;}
@@ -509,8 +520,8 @@ def init_state() -> None:
     ss.setdefault("memory_history", {})
     ss.setdefault("conv_id", None)
     ss.setdefault("messages", [])
-    ss.setdefault("mode_sel", "Knowledge Base")
-    ss.setdefault("_last_mode", "Knowledge Base")
+    ss.setdefault("mode_sel", DEFAULT_MODE)
+    ss.setdefault("_last_mode", DEFAULT_MODE)
     ss.setdefault("scope_doc", None)
     ss.setdefault("scope_type", "All content")
     ss.setdefault("scope_company", None)
@@ -601,7 +612,7 @@ def _group_label(ts: Any) -> str:
 
 def is_admin() -> bool:
     """Admin = ADMIN_PASSWORD is configured and was entered. Admins can see and delete every document.
-    Everyone can upload (Knowledge Base only) and delete their own files."""
+    Everyone can upload (My Documents only) and delete their own files."""
     return bool(_secret("ADMIN_PASSWORD")) and bool(st.session_state.get("admin_ok"))
 
 
@@ -723,7 +734,7 @@ def render_documents_panel() -> None:
         if st.session_state.get("docs_error"):
             st.caption(f"Could not load documents: {st.session_state.docs_error}")
         if not docs:
-            st.caption("No documents yet. Switch to Knowledge Base and attach a PDF.")
+            st.caption("No documents yet. Switch to My Documents and attach a PDF.")
         for doc in docs:
             c1, c2 = st.columns([0.78, 0.22], vertical_alignment="center")
             c1.markdown(f"<div style='font-size:.82rem'>{html.escape(doc.filename)}</div>", unsafe_allow_html=True)
@@ -776,11 +787,12 @@ def render_toolbar() -> None:
                     MODES,
                     selection_mode="single",
                     key="mode_sel",
+                    format_func=MODE_LABELS.get,
                     on_change=_keep_mode,
                     label_visibility="collapsed",
                 )
             else:  # older Streamlit
-                st.radio("Mode", MODES, key="mode_sel", horizontal=True, label_visibility="collapsed")
+                st.radio("Mode", MODES, key="mode_sel", format_func=MODE_LABELS.get, horizontal=True, label_visibility="collapsed")
         mode = current_mode()
 
         with right:
@@ -958,6 +970,13 @@ def render_empty_state(mode: str) -> None:
     for i, text in enumerate(SUGGESTIONS[mode]):
         with cols[i % 2]:
             st.button(text, key=f"sugg_{i}", on_click=queue_prompt, args=(text,), use_container_width=True)
+    if mode == "Q&A":
+        st.markdown(
+            "<div class='side-note' style='text-align:center;margin-top:.8rem'>"
+            f"Want to chat with your own PDF? Switch to <b>{MODE_LABELS['Knowledge Base']}</b> above."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1123,7 +1142,7 @@ def main() -> None:
     if st.session_state.pop("_scroll", False) and messages:
         scroll_to_latest()
 
-    can_attach = _supports_chat_files() and mode == "Knowledge Base"  # uploads: Knowledge Base only
+    can_attach = _supports_chat_files() and mode == "Knowledge Base"  # uploads: My Documents mode only
     has_docs = bool(my_documents())
     placeholder = {
         "Knowledge Base": "Ask about your document" if has_docs else "Attach a PDF to begin, then ask about it",
