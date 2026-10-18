@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -31,6 +32,9 @@ from rag_platform.vectorstore.embeddings import EMBEDDING_DIMENSIONS
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["v1"])
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # PDFs uploaded through the public /ingest endpoint
+_OWNER_RE = re.compile(r"^[a-f0-9]{8,40}$")
 
 
 @router.get("/health", response_model=HealthResponse, summary="Service Health Check")
@@ -173,7 +177,12 @@ UPSERT_BATCH_SIZE = 100  # chunks per database write (keeps each request small)
 
 
 def _ingest_pdf_sync(
-    tmp_path: str, filename: str, doc_id: str, chunk_size: int, chunk_overlap: int
+    tmp_path: str,
+    filename: str,
+    doc_id: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    owner: Optional[str] = None,
 ) -> IngestResponse:
     """Parse a PDF, embed its chunks and store them. Blocking: call from a worker thread."""
     ingest_result = ingest_pdf(
@@ -225,6 +234,10 @@ def _ingest_pdf_sync(
                 "total_pages": ingest_result.total_pages,
                 "tables": ingest_result.tables_count,
                 "images": ingest_result.images_count,
+                # Documents uploaded through this public endpoint belong to the visitor who uploaded
+                # them and are never company annual reports (those are added by upload_company_report.py).
+                "scope": "user",
+                **({"owner": owner} if owner else {}),
             },
         )
         try:
@@ -262,6 +275,7 @@ async def ingest_document(
     file: UploadFile = File(..., description="PDF document file to ingest"),
     chunk_size: int = Form(default=1000, description="Target chunk size in characters"),
     chunk_overlap: int = Form(default=200, description="Chunk overlap size in characters"),
+    owner: Optional[str] = Form(default=None, description="Anonymous visitor id that owns this upload"),
 ) -> IngestResponse:
     """Process and persist a multimodal PDF document (extracting text, tables, images, and OCR)."""
     filename = file.filename or "uploaded_document.pdf"
@@ -271,6 +285,15 @@ async def ingest_document(
     content = await file.read()
     if not content:
         raise IngestionError("Uploaded file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise IngestionError(
+            f"'{filename}' is {len(content) / 1024 / 1024:.1f} MB; the limit for uploads here is "
+            f"{MAX_UPLOAD_BYTES // 1024 // 1024} MB."
+        )
+    owner = (owner or "").strip().lower()
+    if owner and not _OWNER_RE.match(owner):
+        raise IngestionError("Invalid owner id.")
+    owner = owner or None
 
     doc_id = str(uuid.uuid4())[:8] + "_" + filename
 
@@ -283,7 +306,7 @@ async def ingest_document(
         # Heavy, blocking work (PDF parsing, embedding calls, database writes) runs in a worker
         # thread, so /health and other requests stay responsive while a PDF is being indexed.
         return await run_in_threadpool(
-            _ingest_pdf_sync, tmp_path, filename, doc_id, chunk_size, chunk_overlap
+            _ingest_pdf_sync, tmp_path, filename, doc_id, chunk_size, chunk_overlap, owner
         )
     except RagPlatformError:
         raise  # already carries a readable message and the right HTTP status
