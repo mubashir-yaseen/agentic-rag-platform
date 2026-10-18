@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     VECTOR_STORE_DIR: str = Field(default="vector_stores")
     VECTOR_STORE_BACKEND: str = Field(default="faiss")
 
+    # Controlled output directory for agent-generated files (e.g. Excel exports).
+    # Files are always saved under a UUID-derived name inside this directory;
+    # never derived directly from user-supplied paths.
+    GENERATED_FILES_DIR: str = Field(default="generated_files")
+
     # Observability & Tracing (Langfuse / LangSmith)
     LANGFUSE_PUBLIC_KEY: str = Field(default="")
     LANGFUSE_SECRET_KEY: str = Field(default="")
