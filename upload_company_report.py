@@ -20,18 +20,166 @@ Example (PowerShell):
 """
 
 import argparse
+import hashlib
+import json
 import os
+import pickle
 import re
+import time
 import uuid
-from typing import Any, Optional
+from collections import deque
+from typing import Any, Callable, Optional
 
 from supabase import create_client
 
 from rag_platform.config import get_settings
 from rag_platform.ingestion.pipeline import ingest_pdf
 from rag_platform.vectorstore import SupabaseVectorStore, get_embedding_model
+from rag_platform.vectorstore.embeddings import EmbeddingServiceError
 
+CACHE_DIR = ".embed_cache"  # saved progress, so a re-run never repeats finished work
+FREE_TIER_TEXTS_PER_MINUTE = 80  # Google's free tier allows 100 per minute; stay safely below
+EMBED_SLICE_SIZE = 20  # texts per request while uploading
+MAX_QUOTA_WAITS = 8  # consecutive "quota used up" waits before stopping and asking you to re-run later
 UPSERT_BATCH_SIZE = 100  # chunks per database request (a whole annual report in one request can time out)
+
+
+class PatientEmbedder:
+    """Embeds a whole annual report on Google's free tier without failing.
+
+    * keeps under the per-minute limit by pacing itself (a 2,500-chunk report takes ~30 minutes),
+    * when Google still says "quota used up", waits for the time Google asks for and tries again,
+    * saves every finished vector to disk, so if it has to stop (daily limit, Ctrl+C, closed laptop)
+      the next run continues where it stopped instead of starting over.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        cache_path: Optional[str] = None,
+        per_minute: int = FREE_TIER_TEXTS_PER_MINUTE,
+        slice_size: int = EMBED_SLICE_SIZE,
+        max_waits: int = MAX_QUOTA_WAITS,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        log: Callable[[str], None] = print,
+    ) -> None:
+        self.inner = inner
+        self.cache_path = cache_path
+        self.per_minute = per_minute
+        self.slice_size = min(slice_size, per_minute)
+        self.max_waits = max_waits
+        self._sleep = sleep
+        self._clock = clock
+        self._log = log
+        self._sent: deque = deque()  # (time, count) of recent requests
+        self._cache: dict[str, list[float]] = {}
+        if cache_path and os.path.exists(cache_path):
+            with open(cache_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        row = json.loads(line)
+                        self._cache[row["k"]] = row["v"]
+                    except Exception:
+                        continue  # a half-written last line is simply recomputed
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha1((text or "").encode("utf-8")).hexdigest()
+
+    def _pace(self, count: int) -> None:
+        """Block until sending ``count`` more texts keeps us under the per-minute limit."""
+        while True:
+            now = self._clock()
+            while self._sent and now - self._sent[0][0] >= 60:
+                self._sent.popleft()
+            if sum(n for _, n in self._sent) + count <= self.per_minute:
+                self._sent.append((now, count))
+                return
+            self._sleep(max(0.5, 60 - (now - self._sent[0][0]) + 0.5))
+
+    @staticmethod
+    def _wait_hint(message: str) -> float:
+        match = re.search(r"retry in ([0-9.]+)\s*s", message)
+        return float(match.group(1)) + 3 if match else 65.0
+
+    def _embed_slice(self, texts: list[str]) -> list[list[float]]:
+        waits = 0
+        while True:
+            self._pace(len(texts))
+            try:
+                return self.inner.embed_documents(texts)
+            except EmbeddingServiceError as exc:
+                message = str(exc)
+                if "429" not in message:
+                    raise
+                waits += 1
+                if waits > self.max_waits:
+                    raise EmbeddingServiceError(
+                        "Google's free embedding quota is still used up after several waits - most likely the "
+                        "daily limit. Nothing is lost: finished work is saved. Run the same command again later "
+                        "(for example tomorrow) and it will continue where it stopped."
+                    ) from exc
+                wait = self._wait_hint(message)
+                self._log(f"  Google quota reached - waiting {wait:.0f}s (wait {waits}/{self.max_waits})...")
+                self._sleep(wait)
+                self._sent.clear()
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        keys = [self._key(t) for t in texts]
+        todo: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for key, text in zip(keys, texts):
+            if key not in self._cache and key not in seen:
+                seen.add(key)
+                todo.append((key, text))
+        done_before = len(texts) - len(todo)
+        if done_before:
+            self._log(f"  {done_before} of {len(texts)} chunks were already embedded earlier - reusing them.")
+        out = open(self.cache_path, "a", encoding="utf-8") if self.cache_path else None
+        try:
+            for start in range(0, len(todo), self.slice_size):
+                piece = todo[start : start + self.slice_size]
+                vectors = self._embed_slice([text for _, text in piece])
+                for (key, _), vec in zip(piece, vectors):
+                    self._cache[key] = vec
+                    if out:
+                        out.write(json.dumps({"k": key, "v": vec}) + "\n")
+                if out:
+                    out.flush()
+                self._log(f"  embedded {min(start + self.slice_size, len(todo))}/{len(todo)} new chunks")
+        finally:
+            if out:
+                out.close()
+        return [self._cache[k] for k in keys]
+
+
+def _ingest_with_cache(pdf_path: str, use_cache: bool, **ingest_kwargs: Any) -> Any:
+    """Read the PDF (slow: OCR on big reports). The result is saved so a re-run skips this step."""
+    if not use_cache:
+        return ingest_pdf(pdf_path=pdf_path, **ingest_kwargs)
+    digest = hashlib.sha256()
+    with open(pdf_path, "rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    digest.update(repr(sorted((k, str(v)) for k, v in ingest_kwargs.items())).encode())
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR, f"ingest_{digest.hexdigest()[:20]}.pkl")
+    if os.path.exists(path):
+        try:
+            with open(path, "rb") as fh:
+                print("  Reusing the saved PDF reading from an earlier run (skipping OCR).")
+                return pickle.load(fh)
+        except Exception:
+            pass
+    result = ingest_pdf(pdf_path=pdf_path, **ingest_kwargs)
+    try:
+        with open(path + ".tmp", "wb") as fh:
+            pickle.dump(result, fh)
+        os.replace(path + ".tmp", path)
+    except Exception:
+        pass
+    return result
 
 
 def build_company_document_metadata(
@@ -161,8 +309,10 @@ def upload_company_annual_report(
         ) from exc
 
     doc_id = str(uuid.uuid4())[:8] + "_" + resolved_file_name
-    ingest_result = ingest_pdf(
-        pdf_path=pdf_path,
+    real_run = embedding_model is None  # tests pass a fake model; real runs get pacing + saved progress
+    ingest_result = _ingest_with_cache(
+        pdf_path,
+        use_cache=real_run,
         chunk_size=settings.RAG_CHUNK_SIZE,
         chunk_overlap=settings.RAG_CHUNK_OVERLAP,
         extract_tables=True,
@@ -171,10 +321,25 @@ def upload_company_annual_report(
         output_images_dir="data/extracted_images",
         caption_llm=False,
     )
+    # Without a vision model the "image" chunks are only a copy of the page's first words
+    # (no real description), so they add cost but no answers. Skip them.
+    before = len(ingest_result.chunks)
+    ingest_result.chunks = [
+        c for c in ingest_result.chunks if getattr(getattr(c.metadata, "content_type", None), "value", "") != "image"
+    ]
+    skipped_images = before - len(ingest_result.chunks)
+    ingest_result.images_count = max(0, ingest_result.images_count - skipped_images)
+    if skipped_images:
+        print(f"  Skipped {skipped_images} placeholder image chunks (no caption model).")
     if not ingest_result.chunks:
         raise ValueError(f"No text could be extracted from '{resolved_file_name}' (scanned PDF without OCR?).")
 
-    embedding_fn = embedding_model or get_embedding_model()
+    embedding_fn = embedding_model or PatientEmbedder(
+        get_embedding_model(), cache_path=os.path.join(CACHE_DIR, "embeddings.jsonl")
+    )
+    if real_run:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        print(f"  Embedding {len(ingest_result.chunks)} chunks (free tier: roughly {FREE_TIER_TEXTS_PER_MINUTE} per minute).")
     embeddings = embedding_fn.embed_documents([chunk.content for chunk in ingest_result.chunks])
     if len(embeddings) != len(ingest_result.chunks):
         raise ValueError(
