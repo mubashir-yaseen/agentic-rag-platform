@@ -12,7 +12,9 @@ Visitors cannot do any of this: the public /ingest endpoint only creates persona
 Setup (once, in the project folder, with a .env file next to this script):
     SUPABASE_URL=https://<project>.supabase.co
     SUPABASE_SERVICE_ROLE_KEY=<service_role key>
-    GOOGLE_API_KEY=<key from https://aistudio.google.com/app/apikey>
+    CLOUDFLARE_ACCOUNT_ID=<account id>      (recommended: free 10,000 neurons/day, enough for ~3 reports a day)
+    CLOUDFLARE_API_TOKEN=<token with the Workers AI permission>
+    GOOGLE_API_KEY=<key from https://aistudio.google.com/app/apikey>   (only 1,000 chunks/day: too little for reports)
     pip install -e .
 
 Example (PowerShell):
@@ -37,9 +39,11 @@ from rag_platform.ingestion.pipeline import ingest_pdf
 from rag_platform.vectorstore import SupabaseVectorStore, get_embedding_model
 from rag_platform.vectorstore.embeddings import EmbeddingServiceError
 
-CACHE_DIR = ".embed_cache"  # saved progress, so a re-run never repeats finished work
+CACHE_DIR = os.environ.get("RAG_CACHE_DIR", ".embed_cache")  # saved progress; on Colab set RAG_CACHE_DIR to a Google Drive folder
 FREE_TIER_TEXTS_PER_MINUTE = 80  # Google's free tier allows 100 per minute; stay safely below
-EMBED_SLICE_SIZE = 20  # texts per request while uploading
+CLOUDFLARE_TEXTS_PER_MINUTE = 1500  # Cloudflare has no tight per-minute cap; its limit is the daily allowance
+EMBED_SLICE_SIZE = 20  # texts per request while uploading (Google)
+CLOUDFLARE_SLICE_SIZE = 50
 MAX_QUOTA_WAITS = 8  # consecutive "quota used up" waits before stopping and asking you to re-run later
 UPSERT_BATCH_SIZE = 100  # chunks per database request (a whole annual report in one request can time out)
 
@@ -83,9 +87,10 @@ class PatientEmbedder:
                     except Exception:
                         continue  # a half-written last line is simply recomputed
 
-    @staticmethod
-    def _key(text: str) -> str:
-        return hashlib.sha1((text or "").encode("utf-8")).hexdigest()
+    def _key(self, text: str) -> str:
+        # The model name is part of the key: vectors from different models must never be mixed.
+        tag = str(getattr(self.inner, "model", ""))
+        return hashlib.sha1((tag + "\n" + (text or "")).encode("utf-8")).hexdigest()
 
     def _pace(self, count: int) -> None:
         """Block until sending ``count`` more texts keeps us under the per-minute limit."""
@@ -116,8 +121,9 @@ class PatientEmbedder:
                 waits += 1
                 if waits > self.max_waits:
                     raise EmbeddingServiceError(
-                        "Google's free embedding quota is still used up after several waits - most likely the "
-                        "daily limit. Nothing is lost: finished work is saved. Run the same command again later "
+                        "The free embedding quota is still used up after several waits - most likely the daily limit "
+                        "(Google: 1,000 texts/day; Cloudflare: 10,000 neurons/day, resets 00:00 UTC). "
+                        "Nothing is lost: finished work is saved. Run the same command again later "
                         "(for example tomorrow) and it will continue where it stopped."
                     ) from exc
                 wait = self._wait_hint(message)
@@ -334,12 +340,22 @@ def upload_company_annual_report(
     if not ingest_result.chunks:
         raise ValueError(f"No text could be extracted from '{resolved_file_name}' (scanned PDF without OCR?).")
 
-    embedding_fn = embedding_model or PatientEmbedder(
-        get_embedding_model(), cache_path=os.path.join(CACHE_DIR, "embeddings.jsonl")
-    )
-    if real_run:
+    if embedding_model is not None:
+        embedding_fn = embedding_model
+    else:
+        base = get_embedding_model()
+        on_cloudflare = base.__class__.__name__ == "CloudflareEmbeddings"
+        embedding_fn = PatientEmbedder(
+            base,
+            cache_path=os.path.join(CACHE_DIR, "embeddings.jsonl"),
+            per_minute=CLOUDFLARE_TEXTS_PER_MINUTE if on_cloudflare else FREE_TIER_TEXTS_PER_MINUTE,
+            slice_size=CLOUDFLARE_SLICE_SIZE if on_cloudflare else EMBED_SLICE_SIZE,
+        )
         os.makedirs(CACHE_DIR, exist_ok=True)
-        print(f"  Embedding {len(ingest_result.chunks)} chunks (free tier: roughly {FREE_TIER_TEXTS_PER_MINUTE} per minute).")
+        print(
+            f"  Embedding {len(ingest_result.chunks)} chunks with {'Cloudflare' if on_cloudflare else 'Google'} "
+            f"(model {getattr(base, 'model', '?')})."
+        )
     embeddings = embedding_fn.embed_documents([chunk.content for chunk in ingest_result.chunks])
     if len(embeddings) != len(ingest_result.chunks):
         raise ValueError(
