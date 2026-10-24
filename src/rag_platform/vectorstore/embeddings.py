@@ -235,7 +235,7 @@ class CloudflareEmbeddings:
                 if resp.status_code != 429 and resp.status_code < 500:
                     raise EmbeddingServiceError(f"Cloudflare embedding request failed (HTTP {resp.status_code}): {message}")
                 last_problem = (
-                    f"Cloudflare quota or capacity limit (HTTP {resp.status_code}): {message}"
+                    f"Cloudflare quota or capacity limit (HTTP {resp.status_code}; the free daily allowance resets at 00:00 UTC): {message}"
                     if resp.status_code == 429
                     else f"Cloudflare server error (HTTP {resp.status_code}): {message}"
                 )
