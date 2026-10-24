@@ -16,6 +16,13 @@ Why this module looks the way it does
   with back-off. Failures raise ``EmbeddingServiceError`` with Google's own
   message, which the API returns to the UI so you can see what went wrong.
 
+Optional second provider: Cloudflare Workers AI (``@cf/baai/bge-base-en-v1.5``, also
+768 numbers). Google's free tier allows only 1,000 embedded texts per DAY, which is
+not enough to index annual reports (about 2,000 chunks each). Cloudflare's free plan
+allows 10,000 "neurons" per day, roughly 5,000+ chunks. If CLOUDFLARE_ACCOUNT_ID and
+CLOUDFLARE_API_TOKEN are set they are used, otherwise Google. Vectors from the two
+providers are NOT interchangeable: index and search with the same one.
+
 The public functions (``get_embedding_model`` and ``warmup_embedding_model``)
 keep the signatures the rest of the code base already uses.
 """
@@ -171,23 +178,123 @@ class GoogleEmbeddings:
         return _l2_normalize(data["embedding"]["values"])
 
 
+CLOUDFLARE_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"  # 768 numbers, English retrieval model
+CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4/accounts"
+CLOUDFLARE_BATCH_SIZE = 50  # texts per request (Cloudflare accepts up to 100)
+CLOUDFLARE_MAX_TEXT_CHARS = 1800  # the model reads ~512 tokens; longer text is cut for the vector (the stored text is not)
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "  # recommended for bge search queries
+
+
+class CloudflareEmbeddings:
+    """Same interface as GoogleEmbeddings, backed by Cloudflare Workers AI (free: 10,000 neurons/day)."""
+
+    def __init__(self, account_id: str, api_token: str, model: str = CLOUDFLARE_EMBEDDING_MODEL) -> None:
+        if not account_id or not api_token:
+            raise ValueError("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required for CloudflareEmbeddings")
+        self.account_id = account_id
+        self.api_token = api_token
+        self.model = model
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        text = (text or "").strip()
+        return text[:CLOUDFLARE_MAX_TEXT_CHARS] if text else "(empty)"
+
+    def _post(self, texts: list[str], timeout: float) -> list[list[float]]:
+        url = f"{CLOUDFLARE_API_BASE}/{self.account_id}/ai/run/{self.model}"
+        headers = {"Authorization": f"Bearer {self.api_token}", "Content-Type": "application/json"}
+        last_problem = "no response"
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                resp = requests.post(url, headers=headers, json={"text": texts}, timeout=timeout)
+            except requests.RequestException as exc:
+                last_problem = f"network error: {exc.__class__.__name__}"
+                logger.warning("Cloudflare embeddings %s (attempt %d/%d)", last_problem, attempt, MAX_ATTEMPTS)
+            else:
+                if resp.status_code == 200:
+                    try:
+                        body = resp.json()
+                        data = body["result"]["data"]
+                    except Exception:
+                        raise EmbeddingServiceError(f"Cloudflare returned an unexpected answer: {resp.text[:300]}")
+                    if len(data) != len(texts):
+                        raise EmbeddingServiceError(f"Cloudflare returned {len(data)} vectors for {len(texts)} texts.")
+                    return [_l2_normalize(list(vec)) for vec in data]
+                message = resp.text[:300]
+                try:
+                    errors = resp.json().get("errors") or []
+                    if errors:
+                        message = "; ".join(str(e.get("message", e)) for e in errors)[:300]
+                except Exception:
+                    pass
+                if resp.status_code in (401, 403):
+                    raise EmbeddingServiceError(
+                        f"Cloudflare rejected the credentials (HTTP {resp.status_code}). Check CLOUDFLARE_ACCOUNT_ID and that "
+                        f"CLOUDFLARE_API_TOKEN has the 'Workers AI' permission. Cloudflare said: {message}"
+                    )
+                if resp.status_code != 429 and resp.status_code < 500:
+                    raise EmbeddingServiceError(f"Cloudflare embedding request failed (HTTP {resp.status_code}): {message}")
+                last_problem = (
+                    f"Cloudflare quota or capacity limit (HTTP {resp.status_code}): {message}"
+                    if resp.status_code == 429
+                    else f"Cloudflare server error (HTTP {resp.status_code}): {message}"
+                )
+                logger.warning("Cloudflare embeddings HTTP %s (attempt %d/%d)", resp.status_code, attempt, MAX_ATTEMPTS)
+            if attempt < MAX_ATTEMPTS:
+                time.sleep(min(2 ** attempt, 20))
+        raise EmbeddingServiceError(f"Cloudflare embeddings kept failing after {MAX_ATTEMPTS} tries: {last_problem}")
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), CLOUDFLARE_BATCH_SIZE):
+            batch = [self._clean(t) for t in texts[start : start + CLOUDFLARE_BATCH_SIZE]]
+            vectors.extend(self._post(batch, timeout=60))
+        return vectors
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._post([BGE_QUERY_PREFIX + self._clean(text)], timeout=30)[0]
+
+
+def cloudflare_configured(settings: Any = None) -> bool:
+    settings = settings or get_settings()
+    return bool(getattr(settings, "CLOUDFLARE_ACCOUNT_ID", "") and getattr(settings, "CLOUDFLARE_API_TOKEN", ""))
+
+
+def embedding_configured(settings: Any = None) -> bool:
+    """True when either embedding provider has its credentials."""
+    settings = settings or get_settings()
+    return cloudflare_configured(settings) or bool(getattr(settings, "GOOGLE_API_KEY", ""))
+
+
 @lru_cache(maxsize=4)
 def _get_cached_embedding_model(api_key: str, model: str) -> GoogleEmbeddings:
     logger.info("Initializing GoogleEmbeddings model: %s", model)
     return GoogleEmbeddings(api_key=api_key, model=model)
 
 
+@lru_cache(maxsize=4)
+def _get_cached_cloudflare_model(account_id: str, api_token: str, model: str) -> CloudflareEmbeddings:
+    logger.info("Initializing CloudflareEmbeddings model: %s", model)
+    return CloudflareEmbeddings(account_id=account_id, api_token=api_token, model=model)
+
+
 def get_embedding_model(model_name: Optional[str] = None) -> Any:
-    """Return the shared GoogleEmbeddings client.
+    """Return the shared embeddings client: Cloudflare if its credentials are set, otherwise Google.
 
     ``model_name`` is accepted (and ignored) so existing callers that still pass
     the old Hugging Face model name keep working.
     """
-    api_key = getattr(get_settings(), "GOOGLE_API_KEY", "")
+    settings = get_settings()
+    if cloudflare_configured(settings):
+        return _get_cached_cloudflare_model(
+            settings.CLOUDFLARE_ACCOUNT_ID, settings.CLOUDFLARE_API_TOKEN, CLOUDFLARE_EMBEDDING_MODEL
+        )
+    api_key = getattr(settings, "GOOGLE_API_KEY", "")
     if not api_key:
         raise RuntimeError(
-            "Missing GOOGLE_API_KEY. Create a free key (no credit card) at "
-            "https://aistudio.google.com/app/apikey and add it as an environment variable on the API server."
+            "No embedding provider configured. Add GOOGLE_API_KEY (free, no credit card: "
+            "https://aistudio.google.com/app/apikey) or CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN "
+            "as environment variables on the API server."
         )
     return _get_cached_embedding_model(api_key, GOOGLE_EMBEDDING_MODEL)
 
