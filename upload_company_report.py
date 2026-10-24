@@ -30,6 +30,7 @@ import re
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from supabase import create_client
@@ -45,6 +46,9 @@ CLOUDFLARE_TEXTS_PER_MINUTE = 1500  # Cloudflare has no tight per-minute cap; it
 EMBED_SLICE_SIZE = 20  # texts per request while uploading (Google)
 CLOUDFLARE_SLICE_SIZE = 50
 MAX_QUOTA_WAITS = 8  # consecutive "quota used up" waits before stopping and asking you to re-run later
+# Cloudflare's free allowance (10,000 neurons/day) is shared with the live app's searches. A chunk costs about
+# 2 neurons, so by default uploads stop after this many NEW chunks per UTC day and leave the rest for searches.
+DAILY_CHUNK_BUDGET = int(os.environ.get("RAG_DAILY_CHUNK_BUDGET", "3500"))  # 0 = no limit
 UPSERT_BATCH_SIZE = 100  # chunks per database request (a whole annual report in one request can time out)
 
 
@@ -67,8 +71,14 @@ class PatientEmbedder:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         log: Callable[[str], None] = print,
+        daily_budget: int = 0,
+        usage_path: Optional[str] = None,
+        today: Callable[[], str] = lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     ) -> None:
         self.inner = inner
+        self.daily_budget = daily_budget
+        self.usage_path = usage_path
+        self._today = today
         self.cache_path = cache_path
         self.per_minute = per_minute
         self.slice_size = min(slice_size, per_minute)
@@ -102,6 +112,37 @@ class PatientEmbedder:
                 self._sent.append((now, count))
                 return
             self._sleep(max(0.5, 60 - (now - self._sent[0][0]) + 0.5))
+
+
+    # -- daily budget (kept on disk so every file of the batch shares it) -----------
+    def _used_today(self) -> int:
+        if not self.usage_path or not os.path.exists(self.usage_path):
+            return 0
+        try:
+            with open(self.usage_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return int(data.get("chunks", 0)) if data.get("date") == self._today() else 0
+        except Exception:
+            return 0
+
+    def _add_usage(self, count: int) -> None:
+        if not self.usage_path:
+            return
+        total = self._used_today() + count  # read BEFORE the file is reopened for writing (which empties it)
+        try:
+            with open(self.usage_path, "w", encoding="utf-8") as fh:
+                json.dump({"date": self._today(), "chunks": total}, fh)
+        except Exception:
+            pass
+
+    def _check_budget(self, count: int) -> None:
+        if self.daily_budget and self._used_today() + count > self.daily_budget:
+            raise EmbeddingServiceError(
+                f"Stopped on purpose: today's budget of {self.daily_budget} new chunks is used "
+                f"({self._used_today()} done). This leaves the rest of the free daily allowance for the app's "
+                "searches. Nothing is lost - run the same command again after 00:00 UTC (05:00 Pakistan time) "
+                "and it continues where it stopped. (Change the budget with RAG_DAILY_CHUNK_BUDGET.)"
+            )
 
     @staticmethod
     def _wait_hint(message: str) -> float:
@@ -146,7 +187,9 @@ class PatientEmbedder:
         try:
             for start in range(0, len(todo), self.slice_size):
                 piece = todo[start : start + self.slice_size]
+                self._check_budget(len(piece))
                 vectors = self._embed_slice([text for _, text in piece])
+                self._add_usage(len(piece))
                 for (key, _), vec in zip(piece, vectors):
                     self._cache[key] = vec
                     if out:
@@ -350,6 +393,8 @@ def upload_company_annual_report(
             cache_path=os.path.join(CACHE_DIR, "embeddings.jsonl"),
             per_minute=CLOUDFLARE_TEXTS_PER_MINUTE if on_cloudflare else FREE_TIER_TEXTS_PER_MINUTE,
             slice_size=CLOUDFLARE_SLICE_SIZE if on_cloudflare else EMBED_SLICE_SIZE,
+            daily_budget=DAILY_CHUNK_BUDGET if on_cloudflare else 0,
+            usage_path=os.path.join(CACHE_DIR, "usage.json"),
         )
         os.makedirs(CACHE_DIR, exist_ok=True)
         print(
