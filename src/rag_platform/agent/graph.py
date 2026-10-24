@@ -67,6 +67,18 @@ _EXCEL_WORDS = ("excel", "xlsx", "spreadsheet", "workbook")
 _EXCEL_VERBS = ("create", "make", "generate", "build", "export", "prepare", "give me", "produce", "draft", "download")
 
 
+
+def _retrieval_failure_message(output: Any) -> str:
+    """Explain a failed document search; quota problems get a plain-language message."""
+    text = str(output)
+    lowered = text.lower()
+    if "429" in text or "daily free allocation" in lowered or "quota" in lowered:
+        return (
+            "I can't search the documents right now because the free daily limit of the search service has been "
+            "reached. It resets every day at 00:00 UTC (05:00 Pakistan time). Please try again then."
+        )
+    return f"I could not search your documents: {text}"
+
 def _is_excel_request(query: str) -> bool:
     lowered = query.lower()
     return any(w in lowered for w in _EXCEL_WORDS) and any(v in lowered for v in _EXCEL_VERBS)
@@ -389,7 +401,7 @@ def create_agent_graph(
                 "retrieval_context": None,
                 "reasoning_path": reasoning,
                 "sources": [],
-                "final_answer": f"I could not search your documents: {res.output}",
+                "final_answer": _retrieval_failure_message(res.output),
             }
 
         no_hits = bool(res.success and isinstance(data, dict) and data.get("count") == 0 and not zero_company_docs)
