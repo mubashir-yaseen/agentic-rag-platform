@@ -27,7 +27,7 @@ from rag_platform.exceptions import IngestionError, RagPlatformError
 from rag_platform.ingestion.pipeline import ingest_pdf
 from rag_platform.logging_config import get_correlation_id, get_logger
 from rag_platform.vectorstore import SupabaseVectorStore, get_embedding_model
-from rag_platform.vectorstore.embeddings import EMBEDDING_DIMENSIONS
+from rag_platform.vectorstore.embeddings import EMBEDDING_DIMENSIONS, cloudflare_configured, embedding_configured
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ async def readiness_check() -> ReadyResponse:
     settings = get_settings()
     db_ok = bool(settings.SUPABASE_URL and settings.effective_supabase_key)
     llm_ok = bool(settings.effective_api_key)
-    embed_ok = bool(settings.GOOGLE_API_KEY)
+    embed_ok = embedding_configured(settings)
 
     is_ready = db_ok and llm_ok and embed_ok
     return ReadyResponse(
@@ -65,7 +65,7 @@ async def readiness_check() -> ReadyResponse:
         checks={
             "supabase_credentials": db_ok,
             "llm_api_key": llm_ok,
-            "google_api_key": embed_ok,
+            "embedding_provider_key": embed_ok,
         },
     )
 
@@ -83,6 +83,7 @@ def _scrub(text: Any, settings: Any) -> str:
     out = str(text)
     for name in (
         "GOOGLE_API_KEY",
+        "CLOUDFLARE_API_TOKEN",
         "OPENROUTER_API_KEY",
         "OPENAI_API_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
@@ -103,6 +104,7 @@ def _run_diagnostics() -> dict[str, Any]:
     report: dict[str, Any] = {
         "keys_present": {
             "google_api_key": bool(settings.GOOGLE_API_KEY),
+            "cloudflare_credentials": cloudflare_configured(settings),
             "supabase_url": bool(settings.SUPABASE_URL),
             "supabase_key": bool(settings.effective_supabase_key),
             "llm_api_key": bool(settings.effective_api_key),
@@ -110,8 +112,12 @@ def _run_diagnostics() -> dict[str, Any]:
         "llm": {"model_mode": settings.LLM_MODEL_MODE, "model": settings.LLM_MODEL},
         "expected_embedding_dimensions": EMBEDDING_DIMENSIONS,
     }
-    if not settings.GOOGLE_API_KEY:
-        hints.append("Add GOOGLE_API_KEY (free, from aistudio.google.com/app/apikey) in Render > Environment.")
+    report["embedding_provider"] = "cloudflare" if cloudflare_configured(settings) else ("google" if settings.GOOGLE_API_KEY else "none")
+    if not embedding_configured(settings):
+        hints.append(
+            "Add GOOGLE_API_KEY (free, from aistudio.google.com/app/apikey) or CLOUDFLARE_ACCOUNT_ID + "
+            "CLOUDFLARE_API_TOKEN in Render > Environment."
+        )
     if not settings.effective_api_key:
         hints.append("Add OPENROUTER_API_KEY in Render > Environment, or answers cannot be generated.")
 
