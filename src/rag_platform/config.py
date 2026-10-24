@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = Field(default="sentence-transformers/all-MiniLM-L6-v2")
     HUGGINGFACEHUB_API_TOKEN: str = Field(default="")
     GOOGLE_API_KEY: str = Field(default="")
+    # Optional: Cloudflare Workers AI embeddings (free 10,000 neurons/day, far more than Google's 1,000 requests/day).
+    # When both are set they are used instead of Google.
+    CLOUDFLARE_ACCOUNT_ID: str = Field(default="")
+    CLOUDFLARE_API_TOKEN: str = Field(default="")
 
     # RAG Tuning Parameters
     RAG_CHUNK_SIZE: int = Field(default=1000)
