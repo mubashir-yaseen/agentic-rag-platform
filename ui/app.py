@@ -477,6 +477,7 @@ def sync_scope_doc() -> None:
 
 
 def load_companies() -> list[dict[str, Any]]:
+    """Companies that have at least one indexed annual report (the others cannot be searched yet)."""
     if st.session_state.get("companies") is None:
         rows: list[dict[str, Any]] = []
         vs = get_vector_store()
@@ -487,6 +488,18 @@ def load_companies() -> list[dict[str, Any]]:
                 )
             except Exception as exc:
                 st.session_state.companies_error = str(exc)[:200]
+            if rows:
+                try:
+                    docs = vs.client.table("documents").select("metadata").execute().data or []
+                    with_reports = {
+                        str((d.get("metadata") or {}).get("company_id"))
+                        for d in docs
+                        if isinstance(d.get("metadata"), dict) and d["metadata"].get("scope") == "company"
+                    }
+                    rows = [c for c in rows if str(c.get("id")) in with_reports]
+                except Exception as exc:
+                    # If the check fails, show every company rather than an empty menu.
+                    st.session_state.companies_error = str(exc)[:200]
         st.session_state.companies = rows
     return st.session_state.companies
 
@@ -834,8 +847,9 @@ def render_scope_controls(mode: str) -> None:
         companies = load_companies()
         if not companies:
             err = st.session_state.get("companies_error")
-            st.warning(
-                "No companies found. " + (f"({err})" if err else "Add rows to the `companies` table in Supabase.")
+            st.info(
+                "No annual reports are available yet. They are added by the site owner, so please check back soon."
+                + (f" ({err})" if err else "")
             )
             return
         ids = [c["id"] for c in companies]
