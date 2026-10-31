@@ -162,8 +162,8 @@ def test_ingest_pdf_generates_embeddings_and_upserts_to_supabase(client, sample_
     mock_settings.EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
     
     mock_hf = MagicMock()
-    # Mock embed_documents to return 384-dimensional fake embedding vector for each chunk
-    mock_hf.embed_documents.side_effect = lambda texts: [[0.1] * 384 for _ in texts]
+    # Mock embed_documents to return a 768-dimensional fake embedding vector for each chunk
+    mock_hf.embed_documents.side_effect = lambda texts: [[0.1] * 768 for _ in texts]
     
     with patch("rag_platform.api.routes.v1.get_settings", return_value=mock_settings), \
          patch("rag_platform.api.routes.v1.get_embedding_model", return_value=mock_hf), \
@@ -185,7 +185,7 @@ def test_ingest_pdf_generates_embeddings_and_upserts_to_supabase(client, sample_
         assert len(upserted_chunks) > 0
         for chunk in upserted_chunks:
             assert chunk.embedding is not None
-            assert len(chunk.embedding) == 384
+            assert len(chunk.embedding) == 768
 
 
 @pytest.mark.unit
@@ -220,7 +220,7 @@ def test_ingest_pdf_embedding_failure_raises_error_and_does_not_upsert_null(clie
 
 @pytest.mark.unit
 def test_ingest_pdf_zero_chunks_safe_handling(client, sample_pdf_bytes):
-    """Verify uploading a PDF that produces zero chunks handles gracefully without error."""
+    """A PDF that yields no text (e.g. scanned without OCR) is rejected with a clear message, not stored empty."""
     files = {"file": ("empty_content.pdf", sample_pdf_bytes, "application/pdf")}
     
     mock_settings = MagicMock()
@@ -247,13 +247,10 @@ def test_ingest_pdf_zero_chunks_safe_handling(client, sample_pdf_bytes):
         mock_vstore_cls.return_value = mock_vstore_instance
         
         resp = client.post("/api/v1/ingest", files=files, data={"chunk_size": 500, "chunk_overlap": 100})
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["total_chunks"] == 0
-        assert data["status"] == "completed"
-        
-        # upsert_document should be called, but upsert_chunks should NOT be called for 0 chunks
-        assert mock_vstore_instance.upsert_document.called
+        assert resp.status_code == 400
+        assert "No text could be extracted" in resp.text
+        # Nothing is stored for an empty result: no "ghost" document without searchable content.
+        assert not mock_vstore_instance.upsert_document.called
         assert not mock_vstore_instance.upsert_chunks.called
 
 

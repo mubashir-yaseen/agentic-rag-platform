@@ -582,7 +582,7 @@ def test_default_llm_completion_auto_mode_tries_candidates_in_order(monkeypatch)
 
     assert result == "success from fallback"
     assert attempts[0] == "primary-model"
-    assert attempts[1] == "nvidia/nemotron-3.5-lightning:free"
+    assert attempts[1] == "openrouter/free"
     settings.LLM_MODEL_MODE = original_mode
 
 
@@ -634,12 +634,10 @@ def test_run_agent_tool_only_query(mock_vectorstore, mock_embeddings_fn):
 
 
 @pytest.mark.unit
-def test_run_agent_hybrid_query(mock_vectorstore, mock_embeddings_fn):
-    """Verify agent executes both retrieval and tool computation for hybrid requests."""
+def test_run_agent_document_question_with_numbers_still_searches_documents(mock_vectorstore, mock_embeddings_fn):
+    """The router is rule-based: a question about "the report" is always answered from the documents,
+    even when it contains numbers (the calculator is only used when no document is referenced)."""
     def mock_llm(messages):
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return '{"decision": "hybrid", "tool_name": "calculator", "tool_input": "94.9 * 0.462"}'
         return "Based on the report revenue of $94.9B and margin of 46.2%, the gross profit is approx $43.84B."
 
     result = run_agent(
@@ -650,59 +648,92 @@ def test_run_agent_hybrid_query(mock_vectorstore, mock_embeddings_fn):
     )
 
     assert isinstance(result, AgentResult)
-    assert result.routing_decision == "hybrid"
+    assert result.routing_decision == "retrieve"
     assert "retriever" in result.tool_outputs
-    assert "calculator" in result.tool_outputs
-    assert len(result.reasoning_path) >= 4
+    assert "calculator" not in result.tool_outputs
+    assert any("report_2025.pdf" in s for s in result.sources)
 
 
 @pytest.mark.unit
-def test_run_agent_direct_query(mock_vectorstore, mock_embeddings_fn):
-    """Verify agent handles general questions directly without unnecessary retrieval or tool calls."""
-    def mock_llm(messages):
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return '{"decision": "direct", "tool_name": null, "tool_input": null}'
-        return "Python is an interpreted, high-level programming language."
+def test_run_agent_excel_request_over_documents_is_hybrid(mock_vectorstore, mock_embeddings_fn, tmp_path, monkeypatch):
+    """Spreadsheet requests about documents search first, then build the file (hybrid path)."""
+    monkeypatch.chdir(tmp_path)
+    spec = '{"filename": "revenue", "sheet_name": "Sheet1", "data": [{"Metric": "Q3 revenue", "Value": "$94.9B"}]}'
 
+    result = run_agent(
+        query="Create an excel table of the revenue from the report",
+        vectorstore=mock_vectorstore,
+        embeddings_fn=mock_embeddings_fn,
+        llm_call_fn=lambda messages: spec,
+    )
+
+    assert result.routing_decision == "hybrid"
+    assert "retriever" in result.tool_outputs
+    assert result.tool_outputs.get("generated_file", {}).get("filename", "").endswith(".xlsx")
+    assert "Excel file" in result.answer
+
+
+@pytest.mark.unit
+def test_run_agent_general_qa_mode_answers_directly_without_searching(mock_vectorstore, mock_embeddings_fn):
+    """General Q&A mode never searches the user's documents."""
     result = run_agent(
         query="Explain what Python is in one sentence.",
         vectorstore=mock_vectorstore,
         embeddings_fn=mock_embeddings_fn,
-        llm_call_fn=mock_llm,
+        llm_call_fn=lambda messages: "Python is an interpreted, high-level programming language.",
+        mode="Q&A",
+        allow_retrieval=False,
     )
 
     assert isinstance(result, AgentResult)
     assert result.routing_decision == "direct"
+    assert "retriever" not in result.tool_outputs
+    mock_vectorstore.similarity_search.assert_not_called()
     assert "Python is an interpreted" in result.answer
+
+
+@pytest.mark.unit
+def test_run_agent_arithmetic_uses_calculator(mock_vectorstore, mock_embeddings_fn):
+    """A plain arithmetic question (no document words) is routed to the calculator tool."""
+    result = run_agent(
+        query="What is 12 * 3?",
+        vectorstore=mock_vectorstore,
+        embeddings_fn=mock_embeddings_fn,
+        llm_call_fn=lambda messages: "The result is 36.",
+    )
+    assert result.routing_decision == "tool"
+    assert result.tool_outputs.get("calculator") == "36"
 
 
 @pytest.mark.unit
 def test_run_agent_retries_when_llm_emits_tool_call_markup(mock_vectorstore, mock_embeddings_fn):
     """The responder must reject leaked tool-call markup and retry once before falling back."""
     responses = iter([
-        '{"decision": "tool", "tool_name": "calculator", "tool_input": "12 * 3"}',
         '<tool_call><arg_key>query</arg_key><arg_value>current weather in Karachi</arg_value></tool_call>',
         'The calculator result is 36.',
     ])
-
-    def mock_llm(messages):
-        content = next(responses)
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return '{"decision": "tool", "tool_name": "calculator", "tool_input": "12 * 3"}'
-        return content
 
     result = run_agent(
         query="What is 12 * 3?",
         vectorstore=mock_vectorstore,
         embeddings_fn=mock_embeddings_fn,
-        llm_call_fn=mock_llm,
+        llm_call_fn=lambda messages: next(responses),
     )
 
     assert result.routing_decision == "tool"
     assert "<tool_call" not in result.answer.lower()
     assert "36" in result.answer
+
+
+@pytest.mark.unit
+def test_retrieval_failure_message_is_friendly_for_quota_errors():
+    """A used-up embedding quota is explained in plain language instead of leaking the raw API error."""
+    from rag_platform.agent.graph import _retrieval_failure_message
+
+    quota = _retrieval_failure_message("Cloudflare embeddings kept failing (HTTP 429): daily free allocation")
+    assert "daily limit" in quota and "05:00" in quota
+    other = _retrieval_failure_message("Retrieval failed: database offline")
+    assert other.startswith("I could not search your documents")
 
 
 @pytest.mark.unit

@@ -1,0 +1,40 @@
+{
+  "_how_to_use": "Copy this file to eval/questions.json, replace every REPLACE_... value with a fact you checked in the real PDF, and delete the entries you do not need. Entries that still contain REPLACE are skipped automatically.",
+  "questions": [
+    {
+      "id": "fact-1",
+      "company_id": "REPLACE_with_the_company_uuid_from_the_companies_table",
+      "question": "What was the profit after tax for the year 2025?",
+      "expected": ["REPLACE_exact_figure_as_written_in_the_report, e.g. 12,345"],
+      "source_contains": "REPLACE_part_of_the_pdf_file_name, e.g. UBL_AR_2025",
+      "pages": []
+    },
+    {
+      "id": "fact-2-two-figures",
+      "company_id": "REPLACE_company_uuid",
+      "question": "What were total deposits and total assets at year end?",
+      "expected": ["REPLACE_deposits_figure", "REPLACE_assets_figure"],
+      "source_contains": "REPLACE_pdf_name_part"
+    },
+    {
+      "id": "text-1",
+      "company_id": "REPLACE_company_uuid",
+      "question": "Who is the chairman of the board?",
+      "expected": ["REPLACE_name"],
+      "source_contains": "REPLACE_pdf_name_part"
+    },
+    {
+      "id": "choice-1",
+      "company_id": "REPLACE_company_uuid",
+      "question": "Which auditor signed the independent auditor's report?",
+      "expected_any": [["REPLACE_name_spelling_1", "REPLACE_name_spelling_2"]],
+      "source_contains": "REPLACE_pdf_name_part"
+    },
+    {
+      "id": "trap-1",
+      "company_id": "REPLACE_company_uuid",
+      "question": "What was the company's revenue in Japan in 2019?",
+      "should_abstain": true
+    }
+  ]
+}

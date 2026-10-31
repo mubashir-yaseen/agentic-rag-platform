@@ -204,58 +204,96 @@ def test_with_retry_exhaustion_raises_retrieval_error():
         with_retry(failing_fn, max_retries=2, initial_backoff=0.01, operation_name="test_op")
 
 
-@pytest.mark.unit
-def test_get_embedding_model_singleton_caching():
-    """Verify get_embedding_model caches and reuses the HuggingFaceEmbeddings instance."""
-    from unittest.mock import patch
-    from rag_platform.vectorstore.embeddings import _get_cached_embedding_model, get_embedding_model
+def _settings(google="", account="", token=""):
+    return MagicMock(GOOGLE_API_KEY=google, CLOUDFLARE_ACCOUNT_ID=account, CLOUDFLARE_API_TOKEN=token)
 
-    mock_instance = MagicMock()
-    with patch("langchain_huggingface.HuggingFaceEmbeddings", return_value=mock_instance, create=True) as mock_cls:
-        # Clear lru_cache for testing
-        _get_cached_embedding_model.cache_clear()
 
-        emb1 = get_embedding_model("test-model-name")
-        emb2 = get_embedding_model("test-model-name")
-
-        assert emb1 is emb2
-        assert mock_cls.call_count == 1
+def _http(status, body):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = body
+    resp.text = str(body)
+    return resp
 
 
 @pytest.mark.unit
-def test_warmup_embedding_model_uses_singleton_cache():
-    """Warmup must reuse the existing singleton cache and avoid multiple initialization calls."""
-    from rag_platform.vectorstore.embeddings import _get_cached_embedding_model, warmup_embedding_model
+def test_get_embedding_model_is_cached_per_provider():
+    """The embedding client is created once and reused (cheap, no weights, no network at start-up)."""
+    from rag_platform.vectorstore import embeddings as emb
 
-    mock_instance = MagicMock()
-    with patch("langchain_huggingface.HuggingFaceEmbeddings", return_value=mock_instance, create=True) as mock_cls:
-        _get_cached_embedding_model.cache_clear()
-
-        emb1 = warmup_embedding_model("warmup-model-name")
-        emb2 = warmup_embedding_model("warmup-model-name")
-
-        assert emb1 is emb2
-        assert mock_cls.call_count == 1
+    emb._get_cached_embedding_model.cache_clear()
+    with patch.object(emb, "get_settings", return_value=_settings(google="g-key")):
+        first = emb.get_embedding_model("ignored-legacy-name")
+        second = emb.warmup_embedding_model()
+    assert first is second
+    assert isinstance(first, emb.GoogleEmbeddings)
 
 
 @pytest.mark.unit
-def test_embedding_generation_dimension_and_count():
-    """Verify embedding model generates exactly one 384-dimensional vector per input text."""
-    from unittest.mock import MagicMock, patch
-    from rag_platform.vectorstore.embeddings import _get_cached_embedding_model, get_embedding_model
+def test_cloudflare_is_preferred_when_configured_and_missing_keys_raise():
+    from rag_platform.vectorstore import embeddings as emb
 
-    mock_instance = MagicMock()
-    sample_texts = ["Quarterly financial results chunk 1", "Balance sheet assets chunk 2"]
-    mock_instance.embed_documents.return_value = [[0.05] * 384 for _ in sample_texts]
+    emb._get_cached_cloudflare_model.cache_clear()
+    with patch.object(emb, "get_settings", return_value=_settings("g", "acct", "tok")):
+        assert isinstance(emb.get_embedding_model(), emb.CloudflareEmbeddings)
+    with patch.object(emb, "get_settings", return_value=_settings()):
+        with pytest.raises(RuntimeError, match="No embedding provider configured"):
+            emb.get_embedding_model()
+    assert emb.embedding_configured(_settings("", "acct", "tok")) and not emb.embedding_configured(_settings())
 
-    with patch("langchain_huggingface.HuggingFaceEmbeddings", return_value=mock_instance, create=True):
-        _get_cached_embedding_model.cache_clear()
-        model = get_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
-        vectors = model.embed_documents(sample_texts)
 
-        assert len(vectors) == len(sample_texts)
-        for vec in vectors:
-            assert len(vec) == 384
+@pytest.mark.unit
+def test_google_embeddings_return_one_normalised_768_vector_per_text():
+    """Verify the Google client sends batches, asks for 768 numbers and L2-normalises the result."""
+    import math
+    from rag_platform.vectorstore import embeddings as emb
+
+    texts = ["Quarterly financial results chunk 1", "Balance sheet assets chunk 2"]
+    reply = _http(200, {"embeddings": [{"values": [3.0, 4.0] + [0.0] * 766} for _ in texts]})
+    with patch.object(emb.requests, "post", return_value=reply) as post:
+        vectors = emb.GoogleEmbeddings(api_key="k").embed_documents(texts)
+
+    assert len(vectors) == len(texts)
+    assert all(len(v) == 768 for v in vectors)
+    assert all(abs(math.sqrt(sum(x * x for x in v)) - 1.0) < 1e-9 for v in vectors)
+    sent = post.call_args.kwargs["json"]["requests"]
+    assert len(sent) == 2 and sent[0]["output_dimensionality"] == emb.OUTPUT_DIMENSIONALITY
+
+
+@pytest.mark.unit
+def test_cloudflare_embeddings_request_shape_batching_and_query_prefix():
+    from rag_platform.vectorstore import embeddings as emb
+
+    def fake_post(url, headers, json, timeout):
+        n = len(json["text"])
+        return _http(200, {"success": True, "result": {"data": [[3.0, 4.0] + [0.0] * 766] * n}})
+
+    cf = emb.CloudflareEmbeddings("acct", "tok")
+    with patch.object(emb.requests, "post", side_effect=fake_post) as post:
+        vectors = cf.embed_documents(["t"] * 120)
+        assert len(vectors) == 120 and post.call_count == 3  # batches of 50
+        assert post.call_args_list[0].args[0].endswith("/accounts/acct/ai/run/@cf/baai/bge-base-en-v1.5")
+        assert post.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer tok"
+        cf.embed_query("what is profit?")
+        assert post.call_args.kwargs["json"]["text"][0].startswith(emb.BGE_QUERY_PREFIX)
+
+
+@pytest.mark.unit
+def test_cloudflare_quota_error_is_reported_with_http_429_and_bad_token_is_not_retried():
+    from rag_platform.vectorstore import embeddings as emb
+
+    cf = emb.CloudflareEmbeddings("acct", "tok")
+    quota = _http(429, {"errors": [{"message": "daily free allocation exceeded"}]})
+    with patch.object(emb.requests, "post", return_value=quota) as post, patch.object(emb.time, "sleep"):
+        with pytest.raises(emb.EmbeddingServiceError, match="429"):
+            cf.embed_documents(["a"])
+        assert post.call_count == emb.MAX_ATTEMPTS
+
+    denied = _http(401, {"errors": [{"message": "Authentication error"}]})
+    with patch.object(emb.requests, "post", return_value=denied) as post, patch.object(emb.time, "sleep"):
+        with pytest.raises(emb.EmbeddingServiceError, match="Workers AI"):
+            cf.embed_documents(["a"])
+        assert post.call_count == 1
 
 
 @pytest.mark.unit
