@@ -94,6 +94,7 @@ def test_qna_mode_execution_isolation(mock_vectorstore, mock_embeddings):
         embeddings_fn=mock_embeddings,
         llm_call_fn=mock_llm,
         mode="Q&A",
+        allow_retrieval=False,  # the API sets this for Q&A mode
     )
 
     # 1. Vectorstore similarity_search MUST NOT be called
@@ -108,8 +109,8 @@ def test_qna_mode_execution_isolation(mock_vectorstore, mock_embeddings):
     all_content = " ".join(m.get("content", "") for m in captured_messages)
     assert "confidential_corp" not in all_content
     assert "private_doc.pdf" not in all_content
-    assert "general-purpose assistant" in all_content
-    assert "without referencing any internal document context or company identity" in all_content
+    assert "general Q&A mode" in all_content
+    assert "NOT available" in all_content
 
 
 def test_knowledge_base_mode_retrieves_and_grounds(mock_vectorstore, mock_embeddings):
@@ -213,8 +214,22 @@ def test_sse_streaming_preserves_qna_isolation():
 
 
 # ==============================================================================
-# FIX 2: EXCEL RUNTIME TRIGGER TESTS
+# EXCEL ROUTING (rule-based router: no LLM is used to pick the route)
 # ==============================================================================
+
+_SPEC = json.dumps({
+    "filename": "revenue_summary.xlsx",
+    "sheet_name": "Financials",
+    "data": [{"Metric": "Q3 Revenue", "Value": "$94.9 Billion"}, {"Metric": "Gross Margin", "Value": "46.2%"}],
+})
+
+
+def _spec_llm(messages, **kwargs):
+    """Answers the spreadsheet-building prompt with a table; anything else with plain text."""
+    for m in messages:
+        if "turn a request into spreadsheet data" in m.get("content", ""):
+            return _SPEC
+    return "I have generated the Excel file with your financial data."
 
 
 @pytest.mark.parametrize(
@@ -231,141 +246,46 @@ def test_sse_streaming_preserves_qna_isolation():
     ],
 )
 def test_excel_queries_route_to_hybrid(excel_query, mock_vectorstore, mock_embeddings):
-    """Natural-language Excel export requests must route to 'hybrid' so retrieval is run first."""
-    def mock_llm(messages, **kwargs):
-        # LLM router output simulates returning create_excel with natural-language tool_input
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return json.dumps({"decision": "mcp", "tool_name": "create_excel", "tool_input": excel_query})
-        return ""
-
-    graph = create_agent_graph(
-        llm_call_fn=mock_llm,
+    """Excel export requests search the documents first (hybrid), then build the file."""
+    result = run_agent(
+        query=excel_query,
         vectorstore=mock_vectorstore,
         embeddings_fn=mock_embeddings,
-        allow_retrieval=True,
+        llm_call_fn=_spec_llm,
+        mcp_client=McpClient(servers=[McpServerConfig(name="excel")]),
     )
-
-    state = graph.invoke({
-        "query": excel_query,
-        "doc_filters": None,
-        "routing_decision": "direct",
-        "tool_name": None,
-        "tool_input": None,
-        "retrieval_context": None,
-        "tool_output": None,
-        "tool_data": None,
-        "final_answer": None,
-        "reasoning_path": [],
-        "sources": [],
-        "error": None,
-    })
-
-    assert state["routing_decision"] == "hybrid"
-    assert state["tool_name"] == "create_excel"
+    assert result.routing_decision == "hybrid"
+    assert "generated_file" in result.tool_outputs
 
 
-def test_excel_direct_mcp_when_structured_data_present(mock_vectorstore, mock_embeddings):
-    """If tool_input contains explicit structured JSON with non-empty data list, keep direct 'mcp' path."""
-    structured_json = json.dumps({
-        "filename": "custom_report.xlsx",
-        "sheet_name": "Sheet1",
-        "data": [{"Metric": "Revenue", "Value": 100}, {"Metric": "Margin", "Value": 0.45}],
-    })
-
-    def mock_llm(messages, **kwargs):
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return json.dumps({"decision": "mcp", "tool_name": "create_excel", "tool_input": structured_json})
-        return ""
-
-    graph = create_agent_graph(
-        llm_call_fn=mock_llm,
+def test_excel_in_qna_mode_builds_file_without_searching_documents(mock_vectorstore, mock_embeddings):
+    """In Q&A mode documents are never searched, but a spreadsheet can still be built."""
+    result = run_agent(
+        query="Create a blank excel spreadsheet",
         vectorstore=mock_vectorstore,
         embeddings_fn=mock_embeddings,
-        allow_retrieval=True,
+        llm_call_fn=_spec_llm,
+        mcp_client=McpClient(servers=[McpServerConfig(name="excel")]),
+        mode="Q&A",
+        allow_retrieval=False,
     )
-
-    state = graph.invoke({
-        "query": "Export structured rows to excel",
-        "doc_filters": None,
-        "routing_decision": "direct",
-        "tool_name": None,
-        "tool_input": None,
-        "retrieval_context": None,
-        "tool_output": None,
-        "tool_data": None,
-        "final_answer": None,
-        "reasoning_path": [],
-        "sources": [],
-        "error": None,
-    })
-
-    assert state["routing_decision"] == "mcp"
-    assert state["tool_name"] == "create_excel"
-
-
-def test_excel_blank_or_empty_request_preserves_mcp_without_retrieval(mock_vectorstore, mock_embeddings):
-    """If user simply asks for an empty or blank Excel file, do not force retrieval."""
-    def mock_llm(messages, **kwargs):
-        for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return json.dumps({"decision": "mcp", "tool_name": "create_excel", "tool_input": "blank excel file"})
-        return ""
-
-    graph = create_agent_graph(
-        llm_call_fn=mock_llm,
-        vectorstore=mock_vectorstore,
-        embeddings_fn=mock_embeddings,
-        allow_retrieval=True,
-    )
-
-    state = graph.invoke({
-        "query": "Create a blank excel spreadsheet",
-        "doc_filters": None,
-        "routing_decision": "direct",
-        "tool_name": None,
-        "tool_input": None,
-        "retrieval_context": None,
-        "tool_output": None,
-        "tool_data": None,
-        "final_answer": None,
-        "reasoning_path": [],
-        "sources": [],
-        "error": None,
-    })
-
-    assert state["routing_decision"] == "mcp"
-    assert state["tool_name"] == "create_excel"
+    mock_vectorstore.similarity_search.assert_not_called()
+    assert result.routing_decision == "tool"
+    assert "generated_file" in result.tool_outputs
 
 
 def test_agent_create_excel_full_flow_with_retrieval(mock_vectorstore, mock_embeddings):
-    """Verify full end-to-end execution of 'Give me all this in an excel file' generates file output."""
-    def mock_llm(messages, **kwargs):
-        for m in messages:
-            content = m.get("content", "")
-            if "Classify the user query" in content:
-                return json.dumps({"decision": "mcp", "tool_name": "create_excel", "tool_input": "make an excel file"})
-            if "Extract tabular data for an Excel export" in content:
-                return json.dumps({
-                    "filename": "revenue_summary.xlsx",
-                    "sheet_name": "Financials",
-                    "data": [{"Metric": "Q3 Revenue", "Value": "$94.9 Billion"}, {"Metric": "Gross Margin", "Value": "46.2%"}],
-                })
-        return "I have generated the Excel file with your financial data."
-
-    client = McpClient(servers=[McpServerConfig(name="excel")])
+    """Verify end-to-end execution of 'Give me all this in an excel file' generates file output."""
     result = run_agent(
         query="Give me all this in an excel file",
         vectorstore=mock_vectorstore,
         embeddings_fn=mock_embeddings,
-        llm_call_fn=mock_llm,
-        mcp_client=client,
+        llm_call_fn=_spec_llm,
+        mcp_client=McpClient(servers=[McpServerConfig(name="excel")]),
     )
 
     assert isinstance(result, AgentResult)
     assert result.routing_decision == "hybrid"
-    assert "generated_file" in result.tool_outputs
     file_info = result.tool_outputs["generated_file"]
     assert file_info["filename"] == "revenue_summary.xlsx"
     assert file_info["row_count"] == 2

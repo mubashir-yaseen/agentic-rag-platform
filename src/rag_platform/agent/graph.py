@@ -64,7 +64,7 @@ LLM_REQUEST_TIMEOUT_SECONDS = 60
 LLM_MAX_TOKENS = 1500  # caps answer length so slow free models finish sooner
 
 _EXCEL_WORDS = ("excel", "xlsx", "spreadsheet", "workbook")
-_EXCEL_VERBS = ("create", "make", "generate", "build", "export", "prepare", "give me", "produce", "draft", "download")
+_EXCEL_VERBS = ("create", "make", "generate", "build", "export", "prepare", "give me", "produce", "draft", "download", "put", "convert", "turn", "save")
 
 
 

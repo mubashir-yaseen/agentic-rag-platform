@@ -140,75 +140,47 @@ def test_mcp_client_existing_web_search_behavior_unaffected():
 # --- AGENT INTEGRATION TESTS ---
 
 
-@pytest.mark.unit
-def test_agent_routes_to_create_excel_with_structured_router_output():
-    """Verify the agent calls create_excel when the router already supplies structured JSON."""
-    client = McpClient(servers=[McpServerConfig(name="excel")])
-
-    def mock_llm(messages, **kwargs):
+def _spec_llm(spec):
+    def _llm(messages, **kwargs):
         for m in messages:
-            if "Classify the user query" in m.get("content", ""):
-                return json.dumps(
-                    {
-                        "decision": "mcp",
-                        "tool_name": "create_excel",
-                        "tool_input": json.dumps(
-                            {
-                                "filename": "BAHL_2025_deposits.xlsx",
-                                "sheet_name": "Deposits 2025",
-                                "data": SAMPLE_DATA,
-                            }
-                        ),
-                    }
-                )
-        return "I created the Excel file with the requested deposit figures."
+            if "turn a request into spreadsheet data" in m.get("content", ""):
+                return json.dumps(spec)
+        return "Done."
+    return _llm
+
+
+@pytest.mark.unit
+def test_agent_builds_excel_from_llm_table():
+    """In Q&A mode (no document search) the agent builds the workbook from the table the LLM returns."""
+    client = McpClient(servers=[McpServerConfig(name="excel")])
+    spec = {"filename": "BAHL_2025_deposits.xlsx", "sheet_name": "Deposits 2025", "data": SAMPLE_DATA}
 
     result = run_agent(
         query="Create an Excel file containing BAHL's 2025 deposit figures.",
-        llm_call_fn=mock_llm,
+        llm_call_fn=_spec_llm(spec),
         mcp_client=client,
+        allow_retrieval=False,
     )
 
     assert isinstance(result, AgentResult)
-    assert "generated_file" in result.tool_outputs
     gf = result.tool_outputs["generated_file"]
     assert gf["row_count"] == 2
-
     path = resolve_generated_file_path(gf["file_id"])
     assert path is not None and path.exists()
 
 
 @pytest.mark.unit
-def test_agent_create_excel_extraction_falls_back_to_context_grounded_llm_call():
-    """Verify tool_caller_node runs a grounded extraction step when tool_input isn't JSON."""
+def test_agent_create_excel_single_row_table():
     client = McpClient(servers=[McpServerConfig(name="excel")])
-    call_count = {"n": 0}
-
-    def mock_llm(messages, **kwargs):
-        call_count["n"] += 1
-        for m in messages:
-            content = m.get("content", "")
-            if "Classify the user query" in content:
-                return json.dumps(
-                    {"decision": "mcp", "tool_name": "create_excel", "tool_input": "make an excel file"}
-                )
-            if "Extract tabular data for an Excel export" in content:
-                return json.dumps(
-                    {
-                        "filename": "extracted.xlsx",
-                        "sheet_name": "Sheet1",
-                        "data": [{"category": "Total assets", "2025": 500000}],
-                    }
-                )
-        return "Done."
+    spec = {"filename": "extracted.xlsx", "sheet_name": "Sheet1", "data": [{"category": "Total assets", "2025": 500000}]}
 
     result = run_agent(
         query="Create an excel file with the total assets figure.",
-        llm_call_fn=mock_llm,
+        llm_call_fn=_spec_llm(spec),
         mcp_client=client,
+        allow_retrieval=False,
     )
 
-    assert "generated_file" in result.tool_outputs
     assert result.tool_outputs["generated_file"]["row_count"] == 1
 
 
@@ -232,6 +204,7 @@ def test_agent_create_excel_with_no_extractable_data_fails_gracefully():
         query="Create an excel file about nothing in particular.",
         llm_call_fn=mock_llm,
         mcp_client=client,
+        allow_retrieval=False,
     )
 
     assert "generated_file" not in result.tool_outputs
