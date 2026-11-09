@@ -27,6 +27,7 @@ from rag_platform.exceptions import IngestionError, RagPlatformError
 from rag_platform.ingestion.pipeline import ingest_pdf
 from rag_platform.logging_config import get_correlation_id, get_logger
 from rag_platform.vectorstore import SupabaseVectorStore, get_embedding_model
+from rag_platform.ingestion.text_clean import scrub_chunks
 from rag_platform.vectorstore.embeddings import EMBEDDING_DIMENSIONS, cloudflare_configured, embedding_configured
 
 logger = get_logger(__name__)
@@ -205,6 +206,8 @@ def _ingest_pdf_sync(
             f"No text could be extracted from '{filename}'. It may be a scanned PDF (pictures of pages) "
             "and OCR is not available on this server."
         )
+
+    scrub_chunks(ingest_result.chunks)  # NUL characters in a PDF would make Postgres reject the upload
 
     settings = get_settings()
     if settings.SUPABASE_URL and settings.effective_supabase_key:

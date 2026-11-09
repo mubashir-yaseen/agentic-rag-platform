@@ -37,6 +37,7 @@ from supabase import create_client
 
 from rag_platform.config import get_settings
 from rag_platform.ingestion.pipeline import ingest_pdf
+from rag_platform.ingestion.text_clean import scrub_chunks
 from rag_platform.vectorstore import SupabaseVectorStore, get_embedding_model
 from rag_platform.vectorstore.embeddings import EmbeddingServiceError
 
@@ -382,6 +383,9 @@ def upload_company_annual_report(
         print(f"  Skipped {skipped_images} placeholder image chunks (no caption model).")
     if not ingest_result.chunks:
         raise ValueError(f"No text could be extracted from '{resolved_file_name}' (scanned PDF without OCR?).")
+    cleaned = scrub_chunks(ingest_result.chunks)  # NUL characters would make Postgres reject the whole upload
+    if cleaned:
+        print(f"  Removed unsupported characters (NUL) from {cleaned} chunks.")
 
     if embedding_model is not None:
         embedding_fn = embedding_model
@@ -490,17 +494,22 @@ def main():
         listing = "\n".join(f"  id={c.get('id')}  {c.get('symbol')}  {c.get('name')}" for c in available) or "  (table is empty or unreadable)"
         raise SystemExit(f"No company with id '{args.company_id}' in the companies table. Available companies:\n{listing}")
 
-    result = upload_company_annual_report(
-        pdf_path=args.pdf,
-        company_id=str(company["id"]),
-        company_symbol=args.company_symbol or company.get("symbol") or "UNKNOWN",
-        company_name=args.company_name or company.get("name") or "Unknown",
-        year=int(args.year) if args.year is not None else None,
-        report_type=args.report_type,
-        file_name=args.file_name,
-        storage_bucket=args.storage_bucket,
-        supabase_client=client,
-    )
+    try:
+        result = upload_company_annual_report(
+            pdf_path=args.pdf,
+            company_id=str(company["id"]),
+            company_symbol=args.company_symbol or company.get("symbol") or "UNKNOWN",
+            company_name=args.company_name or company.get("name") or "Unknown",
+            year=int(args.year) if args.year is not None else None,
+            report_type=args.report_type,
+            file_name=args.file_name,
+            storage_bucket=args.storage_bucket,
+            supabase_client=client,
+        )
+    except EmbeddingServiceError as exc:
+        # Exit code 3 = "free quota or daily budget used up": the batch script stops and you run it again later.
+        print(f"STOPPED (quota or budget): {exc}")
+        raise SystemExit(3)
 
     print("UPLOAD OK")
     print("doc_id:        ", result["doc_id"])

@@ -71,8 +71,21 @@ def test_calculator_tool_invalid_expression():
 
 
 @pytest.mark.unit
-def test_web_search_tool_execution():
-    """Verify web search tool executes cleanly."""
+def test_web_search_tool_execution(monkeypatch):
+    """Verify web search tool executes cleanly (network mocked so CI never depends on DuckDuckGo)."""
+    import duckduckgo_search
+
+    class _FakeDDGS:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def text(self, query, max_results=5):
+            return [{"title": "AI news", "href": "https://example.com", "body": "Something happened."}]
+
+    monkeypatch.setattr(duckduckgo_search, "DDGS", _FakeDDGS)
     res = web_search_tool("latest AI developments 2026")
     assert res.success is True
     assert isinstance(res.output, str)
